@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BattleZone</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --purple: #7C3AED;
+    --pink: #EC4899;
+    --cyan: #06B6D4;
+    --dark: #0F0F1A;
+    --card: #1A1A2E;
+    --gold: #F59E0B;
+    --silver: #9CA3AF;
+    --bronze: #B45309;
+  }
+
+  body {
+    background: var(--dark);
+    color: white;
+    font-family: 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* SCREENS */
+  .screen { display: none; min-height: 100vh; }
+  .screen.active { display: flex; flex-direction: column; }
+
+  /* ===== HOME SCREEN ===== */
+  #home {
+    background: linear-gradient(135deg, #0F0F1A 0%, #1a0533 50%, #0F0F1A 100%);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  #home::before {
+    content: '';
+    position: absolute;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(124,58,237,0.15) 0%, transparent 70%);
+    top: -100px; left: 50%;
+    transform: translateX(-50%);
+    animation: pulse 4s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: translateX(-50%) scale(1); opacity: 0.5; }
+    50% { transform: translateX(-50%) scale(1.2); opacity: 1; }
+  }
+
+  .logo {
+    font-size: 52px;
+    font-weight: 900;
+    letter-spacing: -2px;
+    background: linear-gradient(135deg, var(--purple), var(--pink), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-align: center;
+    margin-bottom: 8px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .logo-sub {
+    color: rgba(255,255,255,0.4);
+    font-size: 13px;
+    text-align: center;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    margin-bottom: 48px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* LEADERBOARD PREVIEW */
+  .lb-preview {
+    width: 100%;
+    max-width: 380px;
+    background: var(--card);
+    border-radius: 24px;
+    padding: 20px;
+    border: 1px solid rgba(124,58,237,0.3);
+    margin-bottom: 32px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .lb-title {
+    font-size: 12px;
+    color: rgba(255,255,255,0.4);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    text-align: center;
+  }
+
+  .lb-row {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border-radius: 14px;
+    margin-bottom: 8px;
+    transition: all 0.3s;
+  }
+
+  .lb-row:last-child { margin-bottom: 0; }
+
+  .lb-row.first { background: linear-gradient(135deg, rgba(245,158,11,0.2), rgba(245,158,11,0.05)); border: 1px solid rgba(245,158,11,0.3); }
+  .lb-row.second { background: rgba(156,163,175,0.08); border: 1px solid rgba(156,163,175,0.15); }
+  .lb-row.third { background: rgba(180,83,9,0.08); border: 1px solid rgba(180,83,9,0.2); }
+  .lb-row.you { background: linear-gradient(135deg, rgba(124,58,237,0.25), rgba(236,72,153,0.1)); border: 1px solid rgba(124,58,237,0.4); }
+
+  .lb-rank {
+    font-size: 18px;
+    width: 32px;
+    text-align: center;
+    font-weight: 800;
+  }
+
+  .lb-avatar {
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    margin: 0 12px;
+    flex-shrink: 0;
+  }
+
+  .lb-info { flex: 1; }
+  .lb-name { font-size: 15px; font-weight: 600; }
+  .lb-games { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 2px; }
+
+  .lb-score {
+    font-size: 20px;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--purple), var(--pink));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .lb-row.first .lb-score { background: linear-gradient(135deg, #F59E0B, #FCD34D); -webkit-background-clip: text; background-clip: text; }
+
+  /* PLAY BUTTON */
+  .btn-play {
+    width: 100%;
+    max-width: 380px;
+    padding: 20px;
+    border-radius: 20px;
+    border: none;
+    background: linear-gradient(135deg, var(--purple), var(--pink));
+    color: white;
+    font-size: 20px;
+    font-weight: 800;
+    cursor: pointer;
+    letter-spacing: 1px;
+    position: relative;
+    z-index: 1;
+    box-shadow: 0 8px 32px rgba(124,58,237,0.4);
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  .btn-play:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(124,58,237,0.6); }
+  .btn-play:active { transform: translateY(0); }
+
+  .btn-play span { font-size: 24px; margin-left: 10px; }
+
+  /* DAILY BADGE */
+  .daily-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(6,182,212,0.1);
+    border: 1px solid rgba(6,182,212,0.3);
+    border-radius: 100px;
+    padding: 8px 16px;
+    font-size: 12px;
+    color: var(--cyan);
+    margin-top: 20px;
+    position: relative;
+    z-index: 1;
+  }
+
+  .dot { width: 6px; height: 6px; background: var(--cyan); border-radius: 50%; animation: blink 1.5s infinite; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  /* ===== GAME SCREEN ===== */
+  #game {
+    background: linear-gradient(180deg, #0F0F1A 0%, #1a0533 100%);
+    align-items: center;
+    padding: 20px;
+  }
+
+  .game-header {
+    width: 100%;
+    max-width: 380px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+
+  .back-btn {
+    background: rgba(255,255,255,0.08);
+    border: none;
+    color: white;
+    width: 40px; height: 40px;
+    border-radius: 12px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .game-stats {
+    display: flex;
+    gap: 12px;
+  }
+
+  .stat-box {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 8px 16px;
+    text-align: center;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+
+  .stat-label { font-size: 10px; color: rgba(255,255,255,0.4); letter-spacing: 1px; }
+  .stat-val { font-size: 22px; font-weight: 800; }
+  .stat-val.score-val { background: linear-gradient(135deg, var(--purple), var(--pink)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .stat-val.timer-val { color: var(--cyan); }
+
+  /* GAME ARENA */
+  .arena {
+    width: 100%;
+    max-width: 380px;
+    height: 380px;
+    background: var(--card);
+    border-radius: 28px;
+    border: 1px solid rgba(124,58,237,0.2);
+    position: relative;
+    overflow: hidden;
+    margin-bottom: 24px;
+    cursor: pointer;
+  }
+
+  .arena-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 12px;
+    padding: 20px;
+    height: 100%;
+  }
+
+  .cell {
+    background: rgba(255,255,255,0.03);
+    border-radius: 16px;
+    border: 2px solid rgba(255,255,255,0.06);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    cursor: pointer;
+    transition: all 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .cell.active {
+    background: linear-gradient(135deg, rgba(124,58,237,0.4), rgba(236,72,153,0.3));
+    border-color: var(--purple);
+    box-shadow: 0 0 20px rgba(124,58,237,0.5), inset 0 0 20px rgba(124,58,237,0.1);
+    animation: pop-in 0.15s ease;
+  }
+
+  @keyframes pop-in {
+    0% { transform: scale(0.7); }
+    60% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+  }
+
+  .cell.hit {
+    background: linear-gradient(135deg, rgba(6,182,212,0.4), rgba(124,58,237,0.3));
+    border-color: var(--cyan);
+    animation: hit-anim 0.2s ease;
+  }
+
+  @keyframes hit-anim {
+    0% { transform: scale(1.2); }
+    100% { transform: scale(1); opacity: 0; }
+  }
+
+  .cell.miss { animation: miss-anim 0.2s ease; }
+  @keyframes miss-anim {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+  }
+
+  /* PROGRESS BAR */
+  .progress-bar {
+    width: 100%;
+    max-width: 380px;
+    height: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 100px;
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--purple), var(--pink));
+    border-radius: 100px;
+    transition: width 0.1s linear;
+  }
+
+  /* START OVERLAY */
+  .start-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(15,15,26,0.9);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 26px;
+    z-index: 10;
+  }
+
+  .countdown {
+    font-size: 72px;
+    font-weight: 900;
+    background: linear-gradient(135deg, var(--purple), var(--pink));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: count-pop 0.5s ease;
+  }
+
+  @keyframes count-pop {
+    0% { transform: scale(0.5); opacity: 0; }
+    60% { transform: scale(1.2); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  .start-text { color: rgba(255,255,255,0.5); font-size: 14px; margin-top: 8px; }
+
+  /* ===== RESULTS SCREEN ===== */
+  #results {
+    background: linear-gradient(135deg, #0F0F1A 0%, #1a0533 50%, #0F0F1A 100%);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+
+  .results-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--card);
+    border-radius: 28px;
+    padding: 32px 24px;
+    border: 1px solid rgba(124,58,237,0.3);
+    text-align: center;
+    margin-bottom: 20px;
+  }
+
+  .rank-badge {
+    width: 100px; height: 100px;
+    background: linear-gradient(135deg, var(--gold), #FCD34D);
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 48px;
+    margin: 0 auto 20px;
+    box-shadow: 0 8px 32px rgba(245,158,11,0.4);
+    animation: trophy-bounce 0.6s ease;
+  }
+
+  @keyframes trophy-bounce {
+    0% { transform: scale(0) rotate(-20deg); }
+    60% { transform: scale(1.2) rotate(5deg); }
+    100% { transform: scale(1) rotate(0deg); }
+  }
+
+  .result-title { font-size: 28px; font-weight: 900; margin-bottom: 4px; }
+  .result-sub { color: rgba(255,255,255,0.4); font-size: 14px; margin-bottom: 28px; }
+
+  .score-big {
+    font-size: 64px;
+    font-weight: 900;
+    background: linear-gradient(135deg, var(--purple), var(--pink));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .score-label { color: rgba(255,255,255,0.3); font-size: 12px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 28px; }
+
+  .mini-lb {
+    background: rgba(255,255,255,0.03);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  .mini-row {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+  }
+
+  .mini-row:last-child { border-bottom: none; }
+  .mini-row.you-row { background: rgba(124,58,237,0.15); }
+
+  .mini-rank { width: 24px; font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.5); }
+  .mini-emoji { font-size: 20px; margin: 0 10px; }
+  .mini-name { flex: 1; font-size: 14px; font-weight: 600; text-align: right; }
+  .mini-pts { font-size: 15px; font-weight: 800; color: var(--pink); }
+
+  .btn-group { display: flex; gap: 12px; width: 100%; max-width: 380px; }
+
+  .btn-secondary {
+    flex: 1;
+    padding: 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(124,58,237,0.4);
+    background: transparent;
+    color: white;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-secondary:hover { background: rgba(124,58,237,0.1); }
+
+  .btn-primary {
+    flex: 1;
+    padding: 16px;
+    border-radius: 16px;
+    border: none;
+    background: linear-gradient(135deg, var(--purple), var(--pink));
+    color: white;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 4px 20px rgba(124,58,237,0.4);
+  }
+
+  .btn-primary:hover { transform: translateY(-1px); }
+
+  /* FLOATING PARTICLES */
+  .particle {
+    position: fixed;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    pointer-events: none;
+    animation: float-up 3s ease-in-out infinite;
+    opacity: 0;
+  }
+
+  @keyframes float-up {
+    0% { transform: translateY(100vh) translateX(0); opacity: 0; }
+    10% { opacity: 0.6; }
+    90% { opacity: 0.2; }
+    100% { transform: translateY(-10vh) translateX(30px); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== HOME SCREEN ===== -->
+<div class="screen active" id="home">
+  <div class="logo">BattleZone ⚡</div>
+  <div class="logo-sub">תתחרה עם החברים</div>
+
+  <div class="lb-preview">
+    <div class="lb-title">🏆 ליגת היום</div>
+
+    <div class="lb-row first">
+      <div class="lb-rank" style="color: var(--gold)">🥇</div>
+      <div class="lb-avatar" style="background: rgba(245,158,11,0.2)">😎</div>
+      <div class="lb-info">
+        <div class="lb-name">יוסי</div>
+        <div class="lb-games">12 משחקים היום</div>
+      </div>
+      <div class="lb-score" style="background: linear-gradient(135deg, #F59E0B, #FCD34D); -webkit-background-clip: text; background-clip: text;">847</div>
+    </div>
+
+    <div class="lb-row second">
+      <div class="lb-rank" style="color: var(--silver)">🥈</div>
+      <div class="lb-avatar" style="background: rgba(156,163,175,0.1)">🤙</div>
+      <div class="lb-info">
+        <div class="lb-name">דני</div>
+        <div class="lb-games">9 משחקים היום</div>
+      </div>
+      <div class="lb-score">712</div>
+    </div>
+
+    <div class="lb-row third">
+      <div class="lb-rank" style="color: #B45309">🥉</div>
+      <div class="lb-avatar" style="background: rgba(180,83,9,0.1)">🔥</div>
+      <div class="lb-info">
+        <div class="lb-name">שירה</div>
+        <div class="lb-games">7 משחקים היום</div>
+      </div>
+      <div class="lb-score">605</div>
+    </div>
+
+    <div class="lb-row you">
+      <div class="lb-rank" style="color: var(--pink)">#5</div>
+      <div class="lb-avatar" style="background: rgba(124,58,237,0.2)">⭐</div>
+      <div class="lb-info">
+        <div class="lb-name">אתה</div>
+        <div class="lb-games">3 משחקים היום</div>
+      </div>
+      <div class="lb-score">380</div>
+    </div>
+  </div>
+
+  <button class="btn-play" onclick="startGame()">
+    שחק עכשיו <span>▶</span>
+  </button>
+
+  <div class="daily-badge">
+    <div class="dot"></div>
+    4 חברים פעילים עכשיו
+  </div>
+</div>
+
+<!-- ===== GAME SCREEN ===== -->
+<div class="screen" id="game">
+  <div class="game-header">
+    <button class="back-btn" onclick="showScreen('home')">←</button>
+    <div class="game-stats">
+      <div class="stat-box">
+        <div class="stat-label">SCORE</div>
+        <div class="stat-val score-val" id="scoreDisplay">0</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">TIME</div>
+        <div class="stat-val timer-val" id="timerDisplay">30</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arena" id="arena">
+    <div class="arena-grid" id="grid"></div>
+    <div class="start-overlay" id="startOverlay">
+      <div class="countdown" id="countdownNum">3</div>
+      <div class="start-text">תהיה מוכן!</div>
+    </div>
+  </div>
+
+  <div class="progress-bar">
+    <div class="progress-fill" id="progressFill" style="width: 100%"></div>
+  </div>
+</div>
+
+<!-- ===== RESULTS SCREEN ===== -->
+<div class="screen" id="results">
+  <div class="results-card">
+    <div class="rank-badge">🏆</div>
+    <div class="result-title">מקום ראשון!</div>
+    <div class="result-sub">ריסקת את החברים 💪</div>
+
+    <div class="score-big" id="finalScore">0</div>
+    <div class="score-label">נקודות</div>
+
+    <div class="mini-lb">
+      <div class="mini-row you-row">
+        <div class="mini-rank">1</div>
+        <div class="mini-emoji">⭐</div>
+        <div class="mini-name">אתה</div>
+        <div class="mini-pts" id="yourPts">0</div>
+      </div>
+      <div class="mini-row">
+        <div class="mini-rank">2</div>
+        <div class="mini-emoji">😎</div>
+        <div class="mini-name">יוסי</div>
+        <div class="mini-pts">847</div>
+      </div>
+      <div class="mini-row">
+        <div class="mini-rank">3</div>
+        <div class="mini-emoji">🤙</div>
+        <div class="mini-name">דני</div>
+        <div class="mini-pts">712</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="btn-group">
+    <button class="btn-secondary" onclick="showScreen('home')">🏠 בית</button>
+    <button class="btn-primary" onclick="startGame()">🔄 שוב!</button>
+  </div>
+</div>
+
+<script>
+  let score = 0;
+  let timeLeft = 30;
+  let activeCell = -1;
+  let gameTimer = null;
+  let cellTimer = null;
+  let isPlaying = false;
+
+  function showScreen(id) {
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  function buildGrid() {
+    const grid = document.getElementById('grid');
+    grid.innerHTML = '';
+    for (let i = 0; i < 9; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.index = i;
+      cell.addEventListener('click', () => handleClick(i));
+      grid.appendChild(cell);
+    }
+  }
+
+  function startGame() {
+    score = 0;
+    timeLeft = 30;
+    isPlaying = false;
+    showScreen('game');
+    buildGrid();
+    document.getElementById('scoreDisplay').textContent = '0';
+    document.getElementById('timerDisplay').textContent = '30';
+    document.getElementById('progressFill').style.width = '100%';
+    document.getElementById('startOverlay').style.display = 'flex';
+
+    let count = 3;
+    document.getElementById('countdownNum').textContent = count;
+
+    const countInterval = setInterval(() => {
+      count--;
+      if (count <= 0) {
+        clearInterval(countInterval);
+        document.getElementById('startOverlay').style.display = 'none';
+        beginPlay();
+      } else {
+        const el = document.getElementById('countdownNum');
+        el.textContent = count === 1 ? 'GO!' : count;
+        el.style.animation = 'none';
+        el.offsetHeight;
+        el.style.animation = 'count-pop 0.5s ease';
+      }
+    }, 700);
+  }
+
+  function beginPlay() {
+    isPlaying = true;
+    spawnActive();
+
+    gameTimer = setInterval(() => {
+      timeLeft--;
+      document.getElementById('timerDisplay').textContent = timeLeft;
+      document.getElementById('progressFill').style.width = (timeLeft / 30 * 100) + '%';
+
+      if (timeLeft <= 5) {
+        document.getElementById('timerDisplay').style.color = '#EC4899';
+      }
+
+      if (timeLeft <= 0) {
+        endGame();
+      }
+    }, 1000);
+  }
+
+  function spawnActive() {
+    if (!isPlaying) return;
+
+    const cells = document.querySelectorAll('.cell');
+    cells.forEach(c => c.classList.remove('active'));
+
+    let newCell;
+    do { newCell = Math.floor(Math.random() * 9); } while (newCell === activeCell);
+    activeCell = newCell;
+
+    cells[activeCell].classList.add('active');
+    cells[activeCell].textContent = '💥';
+
+    const speed = Math.max(400, 1000 - score * 2);
+    cellTimer = setTimeout(() => {
+      if (cells[activeCell]) {
+        cells[activeCell].classList.remove('active');
+        cells[activeCell].textContent = '';
+      }
+      spawnActive();
+    }, speed);
+  }
+
+  function handleClick(index) {
+    if (!isPlaying) return;
+    const cells = document.querySelectorAll('.cell');
+
+    if (index === activeCell) {
+      clearTimeout(cellTimer);
+      cells[index].classList.remove('active');
+      cells[index].classList.add('hit');
+      cells[index].textContent = '✨';
+      score += 10;
+      document.getElementById('scoreDisplay').textContent = score;
+
+      // floating +10
+      showFloating('+10', cells[index]);
+
+      setTimeout(() => {
+        cells[index].classList.remove('hit');
+        cells[index].textContent = '';
+        spawnActive();
+      }, 200);
+    } else {
+      cells[index].classList.add('miss');
+      setTimeout(() => cells[index].classList.remove('miss'), 200);
+      score = Math.max(0, score - 3);
+      document.getElementById('scoreDisplay').textContent = score;
+    }
+  }
+
+  function showFloating(text, cell) {
+    const el = document.createElement('div');
+    el.textContent = text;
+    el.style.cssText = `
+      position: fixed;
+      color: #7C3AED;
+      font-weight: 900;
+      font-size: 20px;
+      pointer-events: none;
+      z-index: 999;
+      animation: float-score 0.8s ease forwards;
+    `;
+    const rect = cell.getBoundingClientRect();
+    el.style.left = rect.left + rect.width/2 + 'px';
+    el.style.top = rect.top + 'px';
+
+    const style = document.createElement('style');
+    style.textContent = `@keyframes float-score { 0% { transform: translateY(0) scale(1); opacity: 1; } 100% { transform: translateY(-50px) scale(1.3); opacity: 0; } }`;
+    document.head.appendChild(style);
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 800);
+  }
+
+  function endGame() {
+    isPlaying = false;
+    clearInterval(gameTimer);
+    clearTimeout(cellTimer);
+
+    document.getElementById('finalScore').textContent = score;
+    document.getElementById('yourPts').textContent = score;
+
+    const resultTitle = document.querySelector('.result-title');
+    const resultSub = document.querySelector('.result-sub');
+    const rankBadge = document.querySelector('.rank-badge');
+
+    if (score > 847) {
+      resultTitle.textContent = 'מקום ראשון! 🔥';
+      resultSub.textContent = 'ריסקת את כולם! 💪';
+      rankBadge.textContent = '🏆';
+    } else if (score > 712) {
+      resultTitle.textContent = 'מקום שני! 💪';
+      resultSub.textContent = 'כמעט ראשון!';
+      rankBadge.textContent = '🥈';
+      rankBadge.style.background = 'linear-gradient(135deg, #9CA3AF, #D1D5DB)';
+      rankBadge.style.boxShadow = '0 8px 32px rgba(156,163,175,0.4)';
+    } else {
+      resultTitle.textContent = 'תנסה שוב! 💪';
+      resultSub.textContent = 'אתה יכול יותר!';
+      rankBadge.textContent = '⚡';
+      rankBadge.style.background = 'linear-gradient(135deg, #7C3AED, #EC4899)';
+      rankBadge.style.boxShadow = '0 8px 32px rgba(124,58,237,0.4)';
+    }
+
+    showScreen('results');
+  }
+
+  // PARTICLES
+  for (let i = 0; i < 15; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    p.style.left = Math.random() * 100 + 'vw';
+    p.style.animationDelay = Math.random() * 3 + 's';
+    p.style.animationDuration = (2 + Math.random() * 3) + 's';
+    p.style.background = ['#7C3AED','#EC4899','#06B6D4'][Math.floor(Math.random()*3)];
+    document.body.appendChild(p);
+  }
+</script>
+</body>
+</html>
