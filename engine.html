@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>מנוע 4 צילינדר - הדגמה תלת מימדית</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0a0a12;font-family:'Segoe UI',Arial,sans-serif;user-select:none}
+#stage{position:fixed;inset:0}
+#stage canvas{display:block}
+#labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.tag{pointer-events:none;background:rgba(10,10,20,.72);border:1px solid rgba(0,245,255,.5);color:#eafcff;
+  font-size:12px;padding:3px 9px;border-radius:8px;white-space:nowrap;transform:translate(-50%,-140%);
+  box-shadow:0 0 10px rgba(0,245,255,.25)}
+.panel{position:fixed;background:rgba(8,8,16,.82);backdrop-filter:blur(6px);border:1px solid rgba(120,120,160,.25);
+  border-radius:14px;color:#e8e8f0;padding:14px 16px;font-size:13px;z-index:5}
+#legend{top:16px;right:16px;min-width:150px}
+#legend h3,#controls h3,#status h3{font-size:12px;letter-spacing:2px;color:#7fe9ff;margin-bottom:8px;text-transform:uppercase}
+.leg-row{display:flex;align-items:center;gap:8px;margin:4px 0}
+.sw{width:13px;height:13px;border-radius:3px;flex:0 0 auto;box-shadow:0 0 6px currentColor}
+#status{top:16px;left:16px;min-width:170px}
+.cyl-row{display:flex;justify-content:space-between;gap:10px;margin:4px 0;font-size:12.5px}
+.cyl-row b{color:#9be7ff}
+#controls{bottom:16px;right:16px;left:16px;margin:0 auto;max-width:640px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;justify-content:center}
+#controls .grp{display:flex;flex-direction:column;gap:3px;align-items:flex-start}
+#controls label{font-size:11px;color:#b9c3d0}
+#controls input[type=range]{width:130px;accent-color:#00c8ff}
+#controls .row{display:flex;gap:6px}
+button{cursor:pointer;background:linear-gradient(135deg,#00c8ff,#8a3bff);border:none;color:#fff;font-weight:700;
+  font-size:12px;padding:8px 14px;border-radius:9px;letter-spacing:.5px;box-shadow:0 0 12px rgba(0,200,255,.35)}
+button.sec{background:rgba(255,255,255,.08);box-shadow:none;border:1px solid rgba(255,255,255,.15)}
+button:active{transform:scale(.95)}
+.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:#cfd8e3}
+#back{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:6;color:#9be7ff;font-size:12px;
+  text-decoration:none;background:rgba(8,8,16,.7);padding:6px 14px;border-radius:20px;border:1px solid rgba(0,245,255,.3)}
+#hint{position:fixed;bottom:132px;left:0;right:0;text-align:center;color:rgba(255,255,255,.4);font-size:11px;letter-spacing:1px;z-index:4}
+@media (max-width:720px){#legend,#status{position:fixed;font-size:11px}#status{top:auto;bottom:180px;left:8px}#legend{top:8px;right:8px}#controls{bottom:8px}}
+</style>
+</head>
+<body>
+<a id="back" href="index.html">⟵ חזרה למשחק</a>
+<div id="stage"><div id="labels"></div></div>
+<div id="hint">גררו לסיבוב המצלמה · גלגלת לזום</div>
+
+<div class="panel" id="legend">
+  <h3>שלבי הפעימה</h3>
+  <div class="leg-row"><span class="sw" style="background:#3399ff;color:#3399ff"></span>יניקה</div>
+  <div class="leg-row"><span class="sw" style="background:#ffcc22;color:#ffcc22"></span>דחיסה</div>
+  <div class="leg-row"><span class="sw" style="background:#ff5522;color:#ff5522"></span>כוח (התפוצצות)</div>
+  <div class="leg-row"><span class="sw" style="background:#888888;color:#888888"></span>פליטה</div>
+</div>
+
+<div class="panel" id="status">
+  <h3>מצב צילינדרים</h3>
+  <div class="cyl-row"><span>צילינדר 1</span><b id="c0">-</b></div>
+  <div class="cyl-row"><span>צילינדר 2</span><b id="c1">-</b></div>
+  <div class="cyl-row"><span>צילינדר 3</span><b id="c2">-</b></div>
+  <div class="cyl-row"><span>צילינדר 4</span><b id="c3">-</b></div>
+</div>
+
+<div class="panel" id="controls">
+  <button id="playBtn">⏸ עצור</button>
+  <div class="grp">
+    <label>סל"ד: <span id="rpmVal">300</span></label>
+    <input type="range" id="rpm" min="60" max="2500" value="300">
+  </div>
+  <label class="chk"><input type="checkbox" id="chkLabels" checked>תוויות</label>
+  <label class="chk"><input type="checkbox" id="chkTrans" checked>שקיפות בלוק</label>
+  <label class="chk"><input type="checkbox" id="chkHi" checked>הדגשת שלבים</label>
+  <div class="row">
+    <button class="sec" data-cam="front">קדמי</button>
+    <button class="sec" data-cam="side">צד</button>
+    <button class="sec" data-cam="top">מלמעלה</button>
+    <button class="sec" data-cam="reset">איפוס</button>
+  </div>
+</div>
+
+<script type="importmap">
+{"imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+/* ---------- constants (meters-ish scale) ---------- */
+const BORE=0.084, STROKE=0.086, CRANK_R=STROKE/2, ROD_L=0.145, CYL_SPACING=0.13;
+const DECK_Y = CRANK_R + ROD_L + 0.02;
+const CAM_Y = DECK_Y + 0.055;
+const FRONT_X = -(CYL_SPACING*2 + 0.09);
+const REAR_X  =  (CYL_SPACING*2 + 0.09);
+const cylX = i => (i-1.5)*CYL_SPACING;
+const CRANK_SPROCKET_R = 0.024, CAM_SPROCKET_R = CRANK_SPROCKET_R*2;
+const FLYWHEEL_R=0.095, FLYWHEEL_THICK=0.02;
+const MAX_LIFT=0.014;
+
+const THROW_OFFSET_DEG = [0,180,180,0];           // cyl 1..4 crank throw phase
+const CYCLE_OFFSET_DEG = [0,540,180,360];         // cyl 1..4, firing order 1-3-4-2
+const STROKE_NAMES  = ['כוח','פליטה','יניקה','דחיסה'];
+const STROKE_COLORS = [0xff5522,0x888888,0x3399ff,0xffcc22];
+
+const COL = {
+  block:0x9aa0a6, crank:0xcd7f32, piston:0xd7d9db, rod:0x3b3f45, cam:0x2fa9a1,
+  valveIn:0x3399ff, valveEx:0x992222, sprocket:0xd4af37, belt:0x1c1c22,
+  flywheel:0x2b2f33, stripe:0xffcc22, plug:0xf2f2f2
+};
+
+/* ---------- renderer / scene / camera ---------- */
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+stage.appendChild(renderer.domElement);
+
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.domElement.style.position='absolute';
+labelRenderer.domElement.style.inset='0';
+labelRenderer.domElement.style.pointerEvents='none';
+document.getElementById('labels').appendChild(labelRenderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a12);
+scene.fog = new THREE.Fog(0x0a0a12, 1.2, 3.2);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.02, 20);
+const camTarget = new THREE.Vector3(0, DECK_Y*0.55, 0);
+camera.position.set(0.55, 0.42, 0.7);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.copy(camTarget);
+controls.minDistance = 0.35;
+controls.maxDistance = 2.2;
+
+function resize(){
+  const w=innerWidth,h=innerHeight;
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+  renderer.setSize(w,h); labelRenderer.setSize(w,h);
+}
+addEventListener('resize',resize); resize();
+
+/* ---------- lights ---------- */
+scene.add(new THREE.HemisphereLight(0x8fb8ff,0x201010,0.65));
+const key = new THREE.DirectionalLight(0xffffff,1.1);
+key.position.set(0.6,0.9,0.5); key.castShadow=true;
+key.shadow.mapSize.set(1024,1024);
+scene.add(key);
+const fill = new THREE.DirectionalLight(0x6fa8ff,0.4);
+fill.position.set(-0.7,0.3,-0.6);
+scene.add(fill);
+
+const grid = new THREE.GridHelper(1.6, 24, 0x2a3550, 0x161c2c);
+grid.position.y = -CRANK_R-0.09;
+scene.add(grid);
+
+/* ---------- helpers ---------- */
+const engineGroup = new THREE.Group();
+scene.add(engineGroup);
+const labelsGroup = new THREE.Group();
+engineGroup.add(labelsGroup);
+
+function mat(color, opts={}){ return new THREE.MeshStandardMaterial({color, roughness:.45, metalness:.55, ...opts}); }
+
+function addLabel(text, x,y,z){
+  const div=document.createElement('div');
+  div.className='tag'; div.textContent=text;
+  const obj=new CSS2DObject(div);
+  obj.position.set(x,y,z);
+  labelsGroup.add(obj);
+  return obj;
+}
+
+/* ---------- block + liners ---------- */
+const blockMat = mat(COL.block, {transparent:true, opacity:0.9, side:THREE.DoubleSide});
+const blockW = (CYL_SPACING*3)+BORE+0.05;
+const blockMesh = new THREE.Mesh(new THREE.BoxGeometry(blockW, DECK_Y+0.03, BORE+0.07), blockMat);
+blockMesh.position.set(0, DECK_Y/2, 0);
+blockMesh.receiveShadow = true;
+engineGroup.add(blockMesh);
+addLabel('בלוק', -blockW/2+0.02, DECK_Y+0.02, BORE/2+0.03);
+
+const linerMat = mat(0x5f6b78, {transparent:true, opacity:0.35, side:THREE.DoubleSide, roughness:.3, metalness:.2});
+for(let i=0;i<4;i++){
+  const liner = new THREE.Mesh(new THREE.CylinderGeometry(BORE/2+0.004, BORE/2+0.004, DECK_Y, 28, 1, true), linerMat);
+  liner.position.set(cylX(i), DECK_Y/2, 0);
+  engineGroup.add(liner);
+}
+
+/* ---------- crankshaft (rigid body + per-cylinder static throw offsets) ---------- */
+const crankRigid = new THREE.Group();
+engineGroup.add(crankRigid);
+
+const shaftLen = (REAR_X-0.03)-(FRONT_X+0.03);
+const mainShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.02,0.02,shaftLen,20), mat(COL.crank));
+mainShaft.rotation.z = Math.PI/2;
+mainShaft.position.x = (FRONT_X+REAR_X)/2;
+mainShaft.castShadow = true;
+crankRigid.add(mainShaft);
+
+const throwGroups = [];
+const webMat = mat(COL.crank);
+for(let i=0;i<4;i++){
+  const tg = new THREE.Group();
+  tg.position.set(cylX(i),0,0);
+  tg.rotation.x = THREE.MathUtils.degToRad(THROW_OFFSET_DEG[i]); // static phase, baked once
+  const web = new THREE.Mesh(new THREE.BoxGeometry(0.018, CRANK_R+0.008, 0.05), webMat);
+  web.position.y = CRANK_R/2 - 0.004;
+  web.castShadow = true;
+  tg.add(web);
+  const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.03,16), mat(0xffb060));
+  pin.rotation.z = Math.PI/2;
+  pin.position.y = CRANK_R;
+  pin.castShadow = true;
+  tg.add(pin);
+  crankRigid.add(tg);
+  throwGroups.push(tg);
+}
+addLabel('גל ארכובה (קרנק)', REAR_X*0.35, 0.01, BORE/2+0.05);
+
+const flywheel = new THREE.Mesh(new THREE.CylinderGeometry(FLYWHEEL_R,FLYWHEEL_R,FLYWHEEL_THICK,40), mat(COL.flywheel));
+flywheel.rotation.z=Math.PI/2; flywheel.position.x=REAR_X; flywheel.castShadow=true;
+crankRigid.add(flywheel);
+const stripe = new THREE.Mesh(new THREE.BoxGeometry(FLYWHEEL_THICK+0.002,0.014,FLYWHEEL_R*0.85), mat(COL.stripe,{emissive:0x553300,emissiveIntensity:.3}));
+stripe.position.set(REAR_X, FLYWHEEL_R*0.55, 0);
+crankRigid.add(stripe);
+addLabel('גלגל תנופה', REAR_X, FLYWHEEL_R+0.03, 0);
+
+const crankSprocket = new THREE.Mesh(new THREE.CylinderGeometry(CRANK_SPROCKET_R,CRANK_SPROCKET_R,0.02,24), mat(COL.sprocket));
+crankSprocket.rotation.z=Math.PI/2; crankSprocket.position.x=FRONT_X;
+crankRigid.add(crankSprocket);
+
+/* ---------- camshaft (rigid body, half speed) ---------- */
+const camRigid = new THREE.Group();
+camRigid.position.set(0, CAM_Y, 0);
+engineGroup.add(camRigid);
+
+const camShaft = new THREE.Mesh(new THREE.CylinderGeometry(0.014,0.014,shaftLen,18), mat(COL.cam));
+camShaft.rotation.z = Math.PI/2; camShaft.position.x=(FRONT_X+REAR_X)/2;
+camRigid.add(camShaft);
+
+for(let i=0;i<4;i++){
+  for(const side of [-1,1]){
+    const lobe = new THREE.Mesh(new THREE.BoxGeometry(0.016,0.026,0.014), mat(0x1f7a73));
+    lobe.rotation.x = (side<0?0:Math.PI*0.6);
+    lobe.position.set(cylX(i)+side*0.012, 0.014, 0);
+    camRigid.add(lobe);
+  }
+}
+addLabel('גל פיקות', FRONT_X*0.35, 0.02, BORE/2+0.05);
+
+const camSprocket = new THREE.Mesh(new THREE.CylinderGeometry(CAM_SPROCKET_R,CAM_SPROCKET_R,0.02,28), mat(COL.sprocket));
+camSprocket.rotation.z=Math.PI/2; camSprocket.position.x=FRONT_X;
+camRigid.add(camSprocket);
+
+/* ---------- timing belt: exact external-tangent loop between the two sprockets ---------- */
+(function buildTimingBelt(){
+  const D=CAM_Y;
+  // traces the external-tangent loop around two circles (radius r1 @ y=0, r2 @ y=D) into `path`
+  function traceLoop(path, r1, r2){
+    const alpha = Math.asin((r2-r1)/D);
+    const baseAng = Math.PI/2 - alpha;
+    const rot2 = (v,a)=>({u:v.u*Math.cos(a)-v.v*Math.sin(a), v:v.u*Math.sin(a)+v.v*Math.cos(a)});
+    const rdA = rot2({u:0,v:1}, baseAng), rdB = rot2({u:0,v:1}, -baseAng);
+    const angA = Math.atan2(rdA.v, rdA.u), angB = Math.atan2(rdB.v, rdB.u);
+    const p1a = {u:r1*rdA.u, v:r1*rdA.v}, p2b = {u:r2*rdB.u, v:D+r2*rdB.v};
+    path.moveTo(p1a.u,p1a.v);
+    path.absarc(0,0,r1, angA, angB, false);  // small sprocket, long way around
+    path.lineTo(p2b.u,p2b.v);
+    path.absarc(0,D,r2, angB, angA, true);   // big sprocket, short way around
+    path.closePath();
+  }
+  const t = 0.007; // belt band thickness
+  const r1=CRANK_SPROCKET_R, r2=CAM_SPROCKET_R;
+  const shape = new THREE.Shape();
+  traceLoop(shape, r1+t, r2+t);           // outer edge of the belt
+  const hole = new THREE.Path();
+  traceLoop(hole, r1, r2);                // inner edge (rides on the sprockets)
+  shape.holes.push(hole);
+  const geo = new THREE.ExtrudeGeometry(shape, {depth:0.016, bevelEnabled:false, curveSegments:24});
+  const belt = new THREE.Mesh(geo, mat(COL.belt,{roughness:.8,metalness:.1}));
+  belt.rotation.y = Math.PI/2;
+  belt.position.set(FRONT_X-0.008, 0, 0);
+  engineGroup.add(belt);
+  addLabel('רצועת תזמון', FRONT_X, D*0.5, CAM_SPROCKET_R+0.03);
+})();
+
+/* ---------- pistons, rods, valves, spark plugs ---------- */
+const pistons=[], rods=[], valvesIn=[], valvesEx=[], plugLights=[], plugTips=[], strokeRings=[];
+const pistonGeo = new THREE.CylinderGeometry(BORE/2-0.004, BORE/2-0.004, 0.032, 28);
+const rodGeo = new THREE.CylinderGeometry(0.008,0.008,1,10); // unit height, scaled per frame
+const valveStemGeo = new THREE.CylinderGeometry(0.005,0.005,0.06,10);
+const valveHeadGeo = new THREE.CylinderGeometry(0.014,0.014,0.006,20);
+
+for(let i=0;i<4;i++){
+  const x = cylX(i);
+
+  const piston = new THREE.Mesh(pistonGeo, mat(COL.piston));
+  piston.castShadow=true;
+  engineGroup.add(piston); pistons.push(piston);
+
+  const rod = new THREE.Mesh(rodGeo, mat(COL.rod));
+  rod.castShadow=true;
+  engineGroup.add(rod); rods.push(rod);
+
+  const mkValve = (color, zOff)=>{
+    const g = new THREE.Group();
+    const stem = new THREE.Mesh(valveStemGeo, mat(0xcfd4da));
+    const head = new THREE.Mesh(valveHeadGeo, mat(color));
+    head.position.y = -0.03;
+    g.add(stem, head);
+    g.position.set(x, DECK_Y+0.028, zOff);
+    engineGroup.add(g);
+    return g;
+  };
+  valvesIn.push(mkValve(COL.valveIn, -0.017));
+  valvesEx.push(mkValve(COL.valveEx,  0.017));
+
+  const plugTip = new THREE.Mesh(new THREE.ConeGeometry(0.006,0.014,10), mat(COL.plug,{emissive:0x000000,emissiveIntensity:0}));
+  plugTip.position.set(x, DECK_Y+0.05, 0);
+  engineGroup.add(plugTip); plugTips.push(plugTip);
+  const plugLight = new THREE.PointLight(0xfff2c0, 0, 0.25, 2);
+  plugLight.position.set(x, DECK_Y+0.05, 0);
+  engineGroup.add(plugLight); plugLights.push(plugLight);
+
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(BORE/2+0.012, 0.004, 8, 32),
+    mat(0x888888, {emissive:0x888888, emissiveIntensity:0.6}));
+  ring.rotation.x = Math.PI/2;
+  ring.position.set(x, 0.006, 0);
+  engineGroup.add(ring); strokeRings.push(ring);
+}
+addLabel('בוכנה', cylX(0), DECK_Y+0.07, BORE/2+0.05);
+addLabel('מוט חיבור', cylX(0), ROD_L*0.5, BORE/2+0.05);
+addLabel('שסתום יניקה', cylX(0)-0.03, DECK_Y+0.05, -0.02);
+addLabel('שסתום פליטה', cylX(0)-0.03, DECK_Y+0.05, 0.045);
+addLabel('מצת', cylX(1), DECK_Y+0.08, 0);
+
+/* ---------- state ---------- */
+let angle=0, playing=true, rpm=300, showLabels=true, showTrans=true, showHi=true;
+const sparkTimer=[0,0,0,0], firedThisPass=[false,false,false,false];
+const clock = new THREE.Clock();
+
+function liftFromWindow(a, openRad, closeRad, maxLift){
+  if(a<openRad || a>closeRad) return 0;
+  const t=(a-openRad)/(closeRad-openRad);
+  return maxLift*0.5*(1-Math.cos(2*Math.PI*t));
+}
+
+const statusEls = [0,1,2,3].map(i=>document.getElementById('c'+i));
+
+function updateKinematics(dt){
+  if(playing) angle += rpm*(2*Math.PI/60)*dt;
+  angle = ((angle % (4*Math.PI)) + 4*Math.PI) % (4*Math.PI);
+
+  crankRigid.rotation.x = angle;
+  camRigid.rotation.x = angle/2;
+
+  for(let i=0;i<4;i++){
+    const throwRad = THREE.MathUtils.degToRad(THROW_OFFSET_DEG[i]);
+    const theta = angle + throwRad;
+    const pinY = CRANK_R*Math.cos(theta), pinZ = CRANK_R*Math.sin(theta);
+    const pistonY = CRANK_R*Math.cos(theta) + Math.sqrt(Math.max(0, ROD_L*ROD_L - CRANK_R*CRANK_R*Math.sin(theta)*Math.sin(theta)));
+
+    const x = cylX(i);
+    pistons[i].position.set(x, pistonY, 0);
+
+    const pinPos = new THREE.Vector3(x, pinY, pinZ);
+    const pistonPin = new THREE.Vector3(x, pistonY, 0);
+    const rod = rods[i];
+    const dir = pistonPin.clone().sub(pinPos);
+    const len = dir.length();
+    dir.normalize();
+    rod.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+    rod.position.copy(pinPos).add(pistonPin).multiplyScalar(0.5);
+    rod.scale.y = len;
+
+    const cycleOffsetRad = THREE.MathUtils.degToRad(CYCLE_OFFSET_DEG[i]);
+    const localAngle = ((angle - cycleOffsetRad) % (4*Math.PI) + 4*Math.PI) % (4*Math.PI);
+    const strokeIndex = Math.min(3, Math.floor(localAngle/Math.PI));
+
+    const intakeLift = liftFromWindow(localAngle, 2*Math.PI, 3*Math.PI, MAX_LIFT);
+    const exhaustLift = liftFromWindow(localAngle, 1*Math.PI, 2*Math.PI, MAX_LIFT);
+    valvesIn[i].position.y = DECK_Y+0.028 - intakeLift;
+    valvesEx[i].position.y = DECK_Y+0.028 - exhaustLift;
+
+    if(localAngle < 0.05 && !firedThisPass[i]){ sparkTimer[i]=0.12; firedThisPass[i]=true; }
+    if(localAngle > 0.5) firedThisPass[i]=false;
+    sparkTimer[i] = Math.max(0, sparkTimer[i]-dt);
+    const s = sparkTimer[i]/0.12;
+    plugLights[i].intensity = s*4.5;
+    plugTips[i].material.emissive.setRGB(1,0.85,0.4);
+    plugTips[i].material.emissiveIntensity = s*3;
+
+    const col = STROKE_COLORS[strokeIndex];
+    strokeRings[i].material.color.setHex(col);
+    strokeRings[i].material.emissive.setHex(col);
+    strokeRings[i].visible = showHi;
+    statusEls[i].textContent = STROKE_NAMES[strokeIndex];
+    statusEls[i].style.color = '#'+col.toString(16).padStart(6,'0');
+  }
+}
+
+/* ---------- UI wiring ---------- */
+const playBtn = document.getElementById('playBtn');
+playBtn.onclick = ()=>{ playing=!playing; playBtn.textContent = playing? '⏸ עצור':'▶ הפעל'; };
+
+const rpmInput = document.getElementById('rpm');
+const rpmVal = document.getElementById('rpmVal');
+rpmInput.oninput = ()=>{ rpm=+rpmInput.value; rpmVal.textContent=rpm; };
+
+document.getElementById('chkLabels').onchange = e=>{ labelsGroup.visible = e.target.checked; };
+document.getElementById('chkTrans').onchange = e=>{
+  showTrans = e.target.checked;
+  blockMat.opacity = showTrans ? 0.18 : 0.9;
+};
+document.getElementById('chkHi').onchange = e=>{ showHi = e.target.checked; strokeRings.forEach(r=>r.visible=showHi); };
+blockMat.opacity = 0.18; // default: transparent, per checked checkbox
+
+document.querySelectorAll('#controls [data-cam]').forEach(btn=>{
+  btn.onclick = ()=>{
+    const m = btn.dataset.cam;
+    if(m==='front') camera.position.set(0.02, DECK_Y*0.6, 0.85);
+    else if(m==='side') camera.position.set(0.85, DECK_Y*0.6, 0.02);
+    else if(m==='top') camera.position.set(0.01, 0.9, 0.01);
+    else camera.position.set(0.55, 0.42, 0.7);
+    controls.target.copy(camTarget);
+    controls.update();
+  };
+});
+
+/* ---------- loop ---------- */
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  updateKinematics(dt);
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
