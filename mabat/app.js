@@ -88,13 +88,15 @@ const DB = {
   async delSid(sid) { const a = await this.bySid(sid); for (const x of a) await this.del(x.id); },
 };
 
-const DEFAULTS = { rate: 5.0, handle: '', accent: '#ffd60a', quality: 1080, wpm: 140, pace: 1, fontSize: 22, mode: 'voice', timer: 3, maxDur: 60, eye: true, style: 'classic', pos: 64, view: 'focus', light: false, look: 'natural', zoom: true, bar: false };
+const DEFAULTS = { rate: 5.0, handle: '', accent: '#ffd60a', quality: 1080, wpm: 140, pace: 1, fontSize: 22, mode: 'voice', timer: 3, maxDur: 60, eye: false, style: 'classic', pos: 64, view: 'focus', light: false, look: 'natural', zoom: true, bar: false };
 const settings = (() => {
   const old = LS.get('settings2', {}); const keep = {};
   ['rate', 'handle', 'accent', 'quality', 'pace', 'wpm', 'style', 'mode', 'timer', 'maxDur', 'eye'].forEach((k) => { if (old[k] !== undefined) keep[k] = old[k]; });
-  return Object.assign({}, DEFAULTS, keep, LS.get('settings3', {}));
+  const s3 = LS.get('settings3', null);
+  if (s3) { ['handle', 'accent', 'quality', 'pace', 'wpm', 'style', 'timer', 'maxDur', 'pos', 'view', 'light', 'look', 'zoom', 'bar', 'fontSize'].forEach((k) => { if (s3[k] !== undefined) keep[k] = s3[k]; }); }
+  return Object.assign({}, DEFAULTS, keep, LS.get('settings4', {}));
 })();
-const saveSettings = () => LS.set('settings3', settings);
+const saveSettings = () => LS.set('settings4', settings);
 const ACCENTS = ['#ffd60a', '#30d158', '#0a84ff', '#ff375f', '#ffffff'];
 
 let scripts = LS.get('scripts', null);
@@ -334,9 +336,17 @@ const Pacer = {
     let pm = 0; for (let i = 0; i < this.ph.length; i++) pm += this.ph[i]; pm /= this.ph.length;
     let pv = 0; for (let i = 0; i < this.ph.length; i++) pv += (this.ph[i] - pm) ** 2; const pstd = pm ? Math.sqrt(pv / this.ph.length) / pm : 1;
     const hum = pstd < 0.02;
-    if (above > 9 && this.per > 0.55 && this.flat < 0.5 && !hum && (mod > 4.5 || this.voiced)) { this.voiced = true; this.hang = 0.18; }
-    else if (above < 6 || this.per < 0.35 || hum) { this.hang -= dt; if (this.hang <= 0) this.voiced = false; }
-    return { voiced: this.voiced, level: this.level };
+    this.onset = false;
+    if (this.voiced) {
+      if (above < 6 || this.per < 0.35 || hum) { this.hang -= dt; if (this.hang <= 0) this.voiced = false; }
+      else this.hang = 0.18;
+    } else {
+      // צליל צריך להחזיק עשירית שנייה לפני שהוא נחשב דיבור, כדי שקפיצות רגעיות של רעש לא יזיזו את הטקסט
+      const enter = above > 9 && this.per > 0.55 && this.flat < 0.5 && !hum && mod > 4.5;
+      this.cand = enter ? (this.cand || 0) + dt : 0;
+      if (this.cand >= 0.1) { this.voiced = true; this.onset = true; this.hang = 0.18; this.cand = 0; }
+    }
+    return { voiced: this.voiced, level: this.level, onset: this.onset };
   },
 };
 
@@ -456,6 +466,7 @@ const Shoot = {
     }
     if (fromUser) { this.f.prog = 0; this.f.gate = false; this.f.over = 0; this.f.adv = 0; this.f.totalVT = 0; this.newPhrase(); }
     this.lastAdvance = performance.now();
+    const li = this.curLine(); if (li !== this.f.lineIdx) { this.f.lineIdx = li; this.f.lineVT = 0; }
     this.paint();
   },
   segTime() { return Math.max(0, (performance.now() - this.segStart) / 1000); },
@@ -474,52 +485,69 @@ const Shoot = {
       return;
     }
     if (settings.mode !== 'voice' || !a) return;
-    const rate = f.rate * settings.pace * 0.95;
+    const rate = f.rate * settings.pace * 0.92;
     // תקרה קשיחה: הטקסט לא יכול להתקדם מהר יותר ממה שבן אדם מסוגל לדבר בזמן שדיברתם בפועל
-    const cap = f.totalVT * 7.5 + 2;
+    const cap = f.totalVT * 7 + 1.5;
     if (a.voiced) {
-      f.sil = 0; f.snapped = false; f.phraseVT += dt; f.totalVT += dt;
-      const inc = dt * rate;
+      const vdt = a.onset ? dt + 0.1 : dt;
+      f.sil = 0; f.snapped = false; f.phraseVT += vdt; f.totalVT += vdt; f.lineVT = (f.lineVT || 0) + vdt;
       if (f.gate) {
-        // הטקסט הגיע לסוף המשפט לפניכם: מחכים לנשימה. אם ממשיכים לדבר בלי עצירה, משחררים
+        // הטקסט הגיע לסוף שורה לפניכם ומחכה. בסוף שורה הוא ממשיך אחרי רגע קצר של דיבור,
+        // ובסוף משפט הוא מחכה לנשימה. כך הוא אף פעם לא רץ יותר משורה אחת קדימה
         f.over += dt;
-        if (f.over >= Math.max(1.6, 0.6 * f.gateVT)) { f.gate = false; f.prog = Math.min(3, f.over * rate * 0.5); f.over = 0; this.newPhrase(); this.stampCurrent(f.prog / rate); }
-      } else { this.stampCurrent(); f.prog += inc; }
+        const lim = f.gateHard ? 0.6 : 0.2;
+        if (f.over >= lim) { f.gate = false; f.prog = Math.min(2, f.over * rate); f.over = 0; if (f.gateHard) this.newPhrase(); this.stampCurrent(f.prog / rate); }
+      } else { this.stampCurrent(a.onset ? 0.1 : 0); f.prog += (a.onset ? dt + 0.1 : dt) * rate; }
       while (!f.gate && this.p < W.length && f.prog >= sylOf(W[this.p]) && f.adv + sylOf(W[this.p]) <= cap) {
-        f.prog -= sylOf(W[this.p]); f.adv += sylOf(W[this.p]); const w = W[this.p];
+        f.prog -= sylOf(W[this.p]); f.adv += sylOf(W[this.p]);
+        const w = W[this.p]; const lineEnd = this.lineOf[this.p] !== this.lineOf[this.p + 1];
         this.setPointer(this.p + 1);
-        if (isPhraseEnd(w)) { f.gate = true; f.over = 0; f.gateVT = f.phraseVT; f.prog = 0; }
+        if (isPhraseEnd(w)) { f.gate = true; f.gateHard = true; f.over = 0; f.gateVT = f.phraseVT; f.prog = 0; }
+        else if (lineEnd) { f.gate = true; f.gateHard = false; f.over = 0; f.prog = 0; }
         else this.stampCurrent(f.prog / rate);
       }
     } else {
       f.sil += dt;
-      if (f.gate && f.sil > 0.14) { this.learn(); f.gate = false; f.over = 0; f.prog = 0; this.newPhrase(); }
-      if (!f.gate && !f.snapped && f.sil > 0.42) {
+      // לומדים את הקצב רק כשהטקסט והדובר נפגשו בדיוק בסוף המשפט
+      if (f.gate && f.sil > 0.12) { if (f.gateHard) { if (f.over < 0.25) this.learn(); this.newPhrase(); } f.gate = false; f.over = 0; f.prog = 0; }
+      // עצרתם, והזמן שדיברתם מספיק כדי שסיימתם את השורה הנוכחית: משלימים אותה בלבד, אף פעם לא יותר
+      if (!f.gate && !f.snapped && f.sil > 0.4 && this.p < W.length) {
         f.snapped = true;
-        let k = this.p, rem = -f.prog; for (; k < W.length; k++) { rem += sylOf(W[k]); if (isPhraseEnd(W[k])) break; }
-        const ratio = f.phraseVT > 0.3 ? f.phraseSyl / f.phraseVT / f.rate : 99;
-        const [lo, hi] = f.cal < 2 ? [0.65, 1.6] : [0.75, 1.35];
-        // עצרתם, ולפי הזמן שדיברתם סביר שסיימתם את המשפט: הטקסט משלים את המילים האחרונות ולומד את הקצב שלכם
-        if (k < W.length && f.adv + rem <= cap + 2 && ((rem <= 2 && ratio < 2) || (ratio >= lo && ratio <= hi && rem <= f.phraseSyl * 0.45))) {
-          f.adv += Math.max(0, rem);
+        // כמה הברות סביר שאמרתם במשפט הזה, לפי זמן הדיבור והקצב שלכם (עם מרווח קטן)
+        // כמה הברות סביר שאמרתם במשפט הזה לפי זמן הדיבור והקצב. מרווח רחב יותר רק בהתחלה, עד שהקצב נלמד
+        const budget = f.phraseVT * f.rate * ((f.cal || 0) < 3 ? 1.25 : 1.12);
+        let acc = 0; for (let i = f.phraseStart; i < this.p; i++) acc += sylOf(W[i]);
+        // מתקדמים רק לסופי שורות בתוך המשפט הנוכחי, ורק כל עוד זה בתוך מה שהספקתם להגיד
+        let target = this.p, endsPhrase = false;
+        for (let k = this.p; k < W.length; k++) {
+          acc += sylOf(W[k]);
+          if (acc > budget) break;
+          if (this.lineOf[k] !== this.lineOf[k + 1]) { target = k + 1; endsPhrase = isPhraseEnd(W[k]); }
+          if (isPhraseEnd(W[k])) break;
+        }
+        let rem = -f.prog; for (let i = this.p; i < target; i++) rem += sylOf(W[i]);
+        if (target > this.p && rem > 0 && f.adv + rem <= cap + 1.5) {
           const t = this.recording ? this.segTime() - f.sil : 0;
-          for (let i = this.p; i <= k; i++) if (this.recording && this.stamps[i] == null) this.stamps[i] = Math.max(0, t - 0.14 * (k - i + 1));
-          if (ratio >= lo && ratio <= hi) this.learn();
-          this.setPointer(k + 1); f.prog = 0; this.newPhrase();
+          for (let i = this.p; i < target; i++) if (this.recording && this.stamps[i] == null) this.stamps[i] = Math.max(0, t - 0.18 * (target - i));
+          f.adv += rem;
+          // הגענו בדיוק לסוף המשפט: זו נקודת סנכרון אמיתית, לומדים ממנה את הקצב
+          if (endsPhrase) { if (rem > 1) this.learn(); }
+          this.setPointer(target); f.prog = 0;
+          if (endsPhrase) this.newPhrase();
         }
       }
     }
     this.progBar();
   },
   newPhrase() {
-    const f = this.f; f.phraseVT = 0; let s = 0;
+    const f = this.f; f.phraseVT = 0; f.phraseStart = this.p; let s = 0;
     for (let k = this.p; k < this.W.length; k++) { s += sylOf(this.W[k]); if (isPhraseEnd(this.W[k])) break; }
     f.phraseSyl = Math.max(1, s);
   },
   learn() {
     const f = this.f; if (f.phraseVT < 0.5) return;
     const implied = f.phraseSyl / f.phraseVT; if (implied < 3 || implied > 11) return;
-    f.rate = clamp(f.rate * 0.4 + implied * 0.6, 3.5, 9.5); f.cal = (f.cal || 0) + 1;
+    f.rate = clamp(f.rate * 0.5 + implied * 0.5, 3.5, 7.5); f.cal = (f.cal || 0) + 1;
     settings.rate = +f.rate.toFixed(2); saveSettings();
   },
   progBar() {
@@ -574,7 +602,7 @@ const Shoot = {
   /* ---------- כתוביות חיות בזמן הצילום ---------- */
   sizeCap() {
     const cv = $('#live-cap'); const dpr = Math.min(2, window.devicePixelRatio || 1);
-    cv.width = Math.round(cv.clientWidth * dpr); cv.height = Math.round(cv.clientHeight * dpr); this.lastCapKey = '';
+    const r = Math.min(dpr, 1.5); cv.width = Math.round(cv.clientWidth * r); cv.height = Math.round(cv.clientHeight * r); this.lastCapKey = '';
   },
   drawCap(now) {
     const cv = $('#live-cap'); const ctx = cv.getContext('2d');
@@ -725,7 +753,7 @@ const Shoot = {
       }
       this.drawCap(nowMs);
       const v = $('#cam');
-      if (settings.eye && Eye.lm && nowMs - lastEye > 140) {
+      if (settings.eye && Eye.lm && nowMs - lastEye > 260) {
         lastEye = nowMs; Eye.sample(v);
         const ev = $('#eye-val'); ev.hidden = false;
         if (Eye.score == null) { ev.textContent = 'מחפש פנים'; ev.className = 'mid'; }
@@ -808,8 +836,12 @@ $('#s-shoot').addEventListener('pointerdown', () => Pacer.wake());
 $('#sh-close').addEventListener('click', () => { const n = Shoot.segs.length; history.state ? history.back() : goHome(); if (n) toast('הטיוטה נשמרה'); });
 $('#sh-flip').addEventListener('click', () => { if (Shoot.running) return; Shoot.facing = Shoot.facing === 'user' ? 'environment' : 'user'; Shoot.startCam(); haptic(); });
 $('#modes').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { Shoot.setMode(b.dataset.m); haptic(); toast(b.dataset.m === 'rehearse' ? 'חזרה: הטקסט רץ בלי הקלטה' : 'צילום'); } });
-$('#sh-more').addEventListener('click', (e) => { e.stopPropagation(); $('#pop').hidden = !$('#pop').hidden; $('#sh-more').classList.toggle('on', !$('#pop').hidden); haptic(); });
-$('#s-shoot').addEventListener('click', (e) => { if (!$('#pop').hidden && !e.target.closest('#pop') && !e.target.closest('#sh-more')) { $('#pop').hidden = true; $('#sh-more').classList.remove('on'); } });
+const More = {
+  set(open) { $('#pop').hidden = !open; $('#pop-scrim').hidden = !open; $('#sh-more').classList.toggle('on', open); if (open) Shoot.applyRail(); },
+};
+$('#sh-more').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); More.set($('#pop').hidden); haptic(); });
+$('#pop-scrim').addEventListener('click', () => More.set(false));
+$('#pop-done').addEventListener('click', () => More.set(false));
 $('#pop-mode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; settings.mode = b.dataset.v; Shoot.applyRail(); toast(MODE_T[settings.mode]); haptic(); });
 $('#pop-size').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; settings.fontSize = +b.dataset.v; Shoot.applyRail(); Shoot.layout(); haptic(); });
 $('#pop-eye').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; settings.eye = b.dataset.v === '1'; Shoot.applyRail(); if (settings.eye) Eye.load(); haptic(); });

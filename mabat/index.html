@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500&family=Heebo:wght@800;900&family=Karantina:wght@700&family=Rubik:wght@500;600&display=swap">
-<link rel="stylesheet" href="app.css?v=6">
+<link rel="stylesheet" href="app.css?v=7">
 </head>
 <body>
 
@@ -94,13 +94,17 @@
     <button class="rail-btn" id="sh-more"><span class="ri"><svg viewBox="0 0 24 24"><circle cx="12" cy="6" r="1.4" class="fill"/><circle cx="12" cy="12" r="1.4" class="fill"/><circle cx="12" cy="18" r="1.4" class="fill"/></svg></span><span>עוד</span></button>
   </div>
 
+  <div class="pop-scrim" id="pop-scrim" hidden></div>
   <div class="pop" id="pop" hidden>
+    <div class="grab"></div>
+    <div class="pop-h"><b>הגדרות צילום</b><button class="nav-act" id="pop-done">סיום</button></div>
     <p class="pop-l">מעקב אחרי הטקסט</p>
     <div class="segctl" id="pop-mode"><button data-v="voice">קול</button><button data-v="auto">קצב קבוע</button><button data-v="manual">הקשה</button></div>
     <p class="pop-l">גודל טקסט</p>
     <div class="segctl" id="pop-size"><button data-v="18">קטן</button><button data-v="22">רגיל</button><button data-v="26">גדול</button><button data-v="30">ענק</button></div>
     <p class="pop-l">מד קשר עין</p>
     <div class="segctl" id="pop-eye"><button data-v="1">פועל</button><button data-v="0">כבוי</button></div>
+    <p class="pop-n">קול: הטקסט זז רק כשאתם מדברים ועוצר כשאתם עוצרים. קצב קבוע: הטקסט רץ לבד. הקשה: אתם מקישים על הטקסט כדי להתקדם.</p>
   </div>
 
   <div class="status" id="status">
@@ -245,6 +249,6 @@
 
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="app.js?v=6"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

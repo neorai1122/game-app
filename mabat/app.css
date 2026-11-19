@@ -180,9 +180,14 @@ svg .fill{fill:currentColor;stroke:none}
 .shoot.rec .rail,.shoot.rec .top-row .glass-btn{opacity:0;pointer-events:none}
 .shoot.rec .rail{transform:translateX(12px)}
 
-.pop{position:absolute;right:max(60px,calc(var(--sar) + 60px));top:calc(var(--sat) + 170px);z-index:9;width:min(78vw,300px);padding:12px;border-radius:18px;background:var(--mat-strong);-webkit-backdrop-filter:blur(30px) saturate(1.6);backdrop-filter:blur(30px) saturate(1.6);display:grid;gap:6px;animation:fade .2s}
+.pop-scrim{position:absolute;inset:0;z-index:19;background:rgba(0,0,0,.35);animation:fade .2s}
+.pop{position:absolute;left:0;right:0;bottom:0;z-index:20;padding:8px max(16px,var(--sar)) calc(var(--sab) + 22px) max(16px,var(--sal));border-radius:22px 22px 0 0;background:#1c1c1e;display:grid;gap:8px;animation:sheet .4s var(--ease)}
+.pop-h{display:flex;justify-content:space-between;align-items:center;margin:0 4px}
+.pop-h b{font-size:18px;font-weight:700}
+.pop-n{margin:4px 4px 0;font-size:13px;line-height:1.45;color:var(--label2)}
 .pop-l{margin:4px 4px 0;font-size:12px;font-weight:600;color:var(--label2)}
-.pop .segctl{background:rgba(255,255,255,.08)}
+.pop .segctl{background:#2c2c2e}
+.pop .segctl button{height:38px;font-size:15px}
 .pop .segctl button.on{background:#fff;color:#000}
 .status{position:absolute;bottom:calc(var(--sab) + 172px);left:0;right:0;display:flex;justify-content:center;gap:8px;flex-wrap:wrap;z-index:6;pointer-events:none;padding-inline:20px}
 .chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;border-radius:15px;background:var(--mat);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);font-size:14px;font-weight:600;color:#fff;font-variant-numeric:tabular-nums}
@@ -327,6 +332,15 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
 .toast{position:fixed;left:50%;top:calc(var(--sat) + 150px);transform:translateX(-50%);z-index:50;width:max-content;max-width:calc(100vw - 40px);background:var(--mat-strong);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);color:#fff;padding:12px 18px;border-radius:16px;font-size:15px;font-weight:600;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.35);animation:drop .4s var(--ease)}
 @keyframes drop{from{transform:translate(-50%,-16px);opacity:0}}
 
+.shoot *,.review *,.toast{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+.shoot .glass-btn,.shoot .rail-btn .ri,.shoot .dock-side:not(.next),.review .glass-btn,.review .rail-btn .ri,.review .big-play{background:rgba(0,0,0,.46)}
+.shoot .rail-btn.on .ri,.review .rail-btn.on .ri{background:#fff;color:#000}
+.shoot .prompter{background:rgba(0,0,0,.55)}
+.shoot.rec .prompter{background:rgba(0,0,0,.45)}
+.shoot .meter,.shoot .chip,.review .rv-eye{background:rgba(0,0,0,.5)}
+.review .rsheet{background:rgba(28,28,30,.97)}
+.toast{background:rgba(44,44,46,.97)}
+.review .busy{background:rgba(0,0,0,.72)}
 @media (min-width:700px){
   .screen:not(.shoot):not(.review){max-width:600px;margin-inline:auto}
 }

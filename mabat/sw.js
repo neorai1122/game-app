@@ -1,5 +1,5 @@
-const CACHE = 'mabat-v6';
-const SHELL = ['./', './index.html', './app.css?v=6', './app.js?v=6', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
+const CACHE = 'mabat-v7';
+const SHELL = ['./', './index.html', './app.css?v=7', './app.js?v=7', './manifest.json', './icons/icon-192.png', './icons/icon-512.png'];
 const CDN = ['https://fonts.googleapis.com', 'https://fonts.gstatic.com', 'https://cdn.jsdelivr.net', 'https://storage.googleapis.com'];
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL))); self.skipWaiting(); });
