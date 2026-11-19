@@ -98,6 +98,7 @@ const settings = (() => {
 })();
 const saveSettings = () => LS.set('settings4', settings);
 const ACCENTS = ['#ffd60a', '#30d158', '#0a84ff', '#ff375f', '#ffffff'];
+const ACCENT_NAMES = { '#ffd60a': 'צהוב', '#30d158': 'ירוק', '#0a84ff': 'כחול', '#ff375f': 'ורוד', '#ffffff': 'לבן' };
 
 let scripts = LS.get('scripts', null);
 if (!scripts) {
@@ -384,6 +385,16 @@ const Shoot = {
     this.applyRail();
     this.layout();
     this.renderSegs();
+    if (!LS.get('camExplained', false)) {
+      const go = await new Promise((res) => {
+        $('#perm').hidden = false;
+        $('#perm-go').onclick = () => res(true);
+        $('#perm-later').onclick = () => res(false);
+      });
+      $('#perm').hidden = true;
+      if (!go) { history.state ? history.back() : goHome(); return; }
+      LS.set('camExplained', true);
+    }
     await this.startCam();
     Wake.on();
     if (settings.eye) Eye.load();
@@ -1446,7 +1457,7 @@ const Review = {
     $('#looks').innerHTML = Object.entries(LOOKS).map(([k, l]) => `<button class="${k === settings.look ? 'on' : ''}" data-k="${k}">${l.name}</button>`).join('');
   },
   swatches() {
-    $('#rv-accent').innerHTML = ACCENTS.map((c) => `<button class="swatch${c === settings.accent ? ' on' : ''}" style="background:${c}" data-c="${c}" aria-label="צבע"></button>`).join('');
+    $('#rv-accent').innerHTML = ACCENTS.map((c) => `<button class="swatch${c === settings.accent ? ' on' : ''}" style="background:${c}" data-c="${c}" aria-label="צבע ${ACCENT_NAMES[c] || ''}" aria-pressed="${c === settings.accent}"></button>`).join('');
   },
   groupsList() {
     $('#groups').innerHTML = R.groups.map((g, i) => {
@@ -1705,6 +1716,41 @@ const segctl = (sel, key) => $(sel).addEventListener('click', (e) => { const b =
 segctl('#set-pace', 'pace'); segctl('#set-quality', 'quality');
 $('#set-wpm').addEventListener('input', (e) => { settings.wpm = +e.target.value; $('#set-wpm-l').textContent = settings.wpm + ' מילים לדקה'; saveSettings(); });
 $('#settings').addEventListener('click', (e) => { if (e.target.id === 'settings' || e.target.closest('[data-close]')) $('#settings').hidden = true; });
+
+/* =========================================================
+   גיליונות: גרירה למטה סוגרת, כמו באייפון
+   ========================================================= */
+function swipeToDismiss(sheet, close) {
+  let y0 = 0, dy = 0, t0 = 0, active = false, id = null;
+  sheet.addEventListener('pointerdown', (e) => {
+    const onGrab = e.target.closest('.grab, .pop-h, .msheet-h');
+    const atTop = sheet.scrollTop <= 0 && e.clientY - sheet.getBoundingClientRect().top < 64;
+    if (!onGrab && !atTop) return;
+    if (e.target.closest('button, input, select, textarea')) return;
+    active = true; id = e.pointerId; y0 = e.clientY; dy = 0; t0 = performance.now();
+    sheet.style.transition = 'none';
+    try { sheet.setPointerCapture(id); } catch (_) {}
+  });
+  sheet.addEventListener('pointermove', (e) => {
+    if (!active || e.pointerId !== id) return;
+    dy = Math.max(0, e.clientY - y0);
+    sheet.style.transform = `translateY(${dy}px)`;
+  });
+  const end = (e) => {
+    if (!active || e.pointerId !== id) return; active = false;
+    const v = dy / Math.max(1, performance.now() - t0);
+    sheet.style.transition = 'transform .32s cubic-bezier(.32,.72,0,1)';
+    if (dy > 110 || (v > 0.6 && dy > 30)) {
+      sheet.style.transform = 'translateY(100%)';
+      setTimeout(() => { sheet.style.transform = ''; sheet.style.transition = ''; close(); }, 260);
+      haptic(6);
+    } else { sheet.style.transform = ''; setTimeout(() => (sheet.style.transition = ''), 330); }
+  };
+  sheet.addEventListener('pointerup', end); sheet.addEventListener('pointercancel', end);
+}
+swipeToDismiss($('#settings .msheet'), () => ($('#settings').hidden = true));
+swipeToDismiss($('#pop'), () => More.set(false));
+['style', 'caps', 'edit'].forEach((n) => swipeToDismiss($('#sheet-' + n), () => Review.sheet(null)));
 
 /* =========================================================
    התחלה

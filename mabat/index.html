@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="מבט">
@@ -16,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500&family=Heebo:wght@800;900&family=Karantina:wght@700&family=Rubik:wght@500;600&display=swap">
-<link rel="stylesheet" href="app.css?v=7">
+<link rel="stylesheet" href="app.css?v=8">
 </head>
 <body>
 
@@ -112,6 +113,20 @@
   </div>
 
   <div class="countdown" id="countdown" hidden></div>
+
+  <div class="perm" id="perm" hidden>
+    <div class="perm-card">
+      <span class="glyph red big"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="M16 10.5 21 8v8l-5-2.5"/></svg></span>
+      <h2>מצלמה ומיקרופון</h2>
+      <ul>
+        <li><svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="M16 10.5 21 8v8l-5-2.5"/></svg><span><b>מצלמה</b> כדי לצלם אתכם, עם הטקסט מתחת לעדשה.</span></li>
+        <li><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg><span><b>מיקרופון</b> כדי להקליט את הקול, ושהטקסט יזוז בקצב שלכם.</span></li>
+        <li><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><span><b>פרטיות.</b> הסרטונים והקול נשארים בטלפון ולא נשלחים לשום מקום.</span></li>
+      </ul>
+      <button class="btn tint" id="perm-go"><span>המשך</span></button>
+      <button class="nav-act" id="perm-later">לא עכשיו</button>
+    </div>
+  </div>
 
   <div class="dock">
     <div class="modes" id="modes" role="tablist">
@@ -249,6 +264,6 @@
 
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>
