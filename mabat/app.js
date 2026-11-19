@@ -46,8 +46,8 @@ const Wake = {
   off() { try { this.lock && this.lock.release(); } catch (_) {} this.lock = null; },
 };
 
-let AC = null;
-function audioCtx() { if (!AC) AC = new (window.AudioContext || window.webkitAudioContext)(); if (AC.state === 'suspended') AC.resume().catch(() => {}); return AC; }
+/* הקשר שמע נפרד לכל תפקיד: מיקרופון בזמן צילום וייצוא. הניגון הרגיל עובר ישירות לרמקול */
+function newAC() { return new (window.AudioContext || window.webkitAudioContext)(); }
 
 /* =========================================================
    אחסון
@@ -84,7 +84,7 @@ const DB = {
   async delSid(sid) { const a = await this.bySid(sid); for (const x of a) await this.del(x.id); },
 };
 
-const DEFAULTS = { handle: '', accent: '#ffd60a', quality: 1080, wpm: 140, pace: 1, fontSize: 22, mode: 'voice', timer: 3, maxDur: 60, eye: true, style: 'classic', pos: 72 };
+const DEFAULTS = { rate: 5.0, handle: '', accent: '#ffd60a', quality: 1080, wpm: 140, pace: 1, fontSize: 22, mode: 'voice', timer: 3, maxDur: 60, eye: true, style: 'classic', pos: 72 };
 const settings = Object.assign({}, DEFAULTS, LS.get('settings2', {}));
 const saveSettings = () => LS.set('settings2', settings);
 const ACCENTS = ['#ffd60a', '#30d158', '#0a84ff', '#ff375f', '#ffffff'];
@@ -132,9 +132,28 @@ function sylOf(w) {
   const n = w.norm || '';
   if (!n) return 0.6;
   if (/\d/.test(n)) return n.length * 1.4;
-  return Math.max(1, n.length * 0.55);
+  return Math.max(1, n.length * 0.5);
 }
 const isPhraseEnd = (w) => !!(w && (w.brk || w.end));
+function lev(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 9;
+  const d = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = d[0]; d[0] = i;
+    for (let j = 1; j <= b.length; j++) { const t = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = t; }
+  }
+  return d[b.length];
+}
+function similar(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const st = (x) => (x.length > 2 && 'ובהלשמכ'.includes(x[0]) ? x.slice(1) : x);
+  if (st(a) === b || a === st(b) || st(a) === st(b)) return true;
+  const m = Math.min(a.length, b.length);
+  if (m >= 4 && (a.startsWith(b) || b.startsWith(a))) return true;
+  if (m >= 4 && lev(a, b) <= (m >= 7 ? 2 : 1)) return true;
+  return false;
+}
 
 /* =========================================================
    ניווט
@@ -236,51 +255,41 @@ leaveHooks.editor = () => { clearTimeout(edT); Editor.save(); };
    מעקב קולי
    ========================================================= */
 const Pacer = {
-  an: null, src: null, buf: null,
+  ac: null, an: null, src: null, buf: null, hist: null,
   attach(stream) {
     this.detach();
     if (!stream || !stream.getAudioTracks().length) return false;
-    const ctx = audioCtx();
-    this.src = ctx.createMediaStreamSource(stream);
-    this.an = ctx.createAnalyser(); this.an.fftSize = 1024; this.an.smoothingTimeConstant = 0;
-    this.src.connect(this.an);
-    this.buf = new Float32Array(this.an.fftSize);
-    this.reset();
+    try {
+      this.ac = newAC();
+      this.src = this.ac.createMediaStreamSource(stream);
+      this.an = this.ac.createAnalyser(); this.an.fftSize = 512; this.an.smoothingTimeConstant = 0;
+      this.src.connect(this.an);
+      this.buf = new Float32Array(this.an.fftSize);
+    } catch (e) { console.warn(e); return false; }
+    this.reset(); this.wake();
     return true;
   },
-  reset() {
-    this.floor = -55; this.env = -90; this.prevEnv = -90; this.lastMin = -90; this.rising = false;
-    this.lastPeak = 0; this.level = 0; this.voiced = false; this.hang = 0;
-    this.rate = 4.3; this.vt = 0; this.pk = 0; this.ready = false;
+  wake() { try { if (this.ac && this.ac.state !== 'running') this.ac.resume().catch(() => {}); } catch (_) {} },
+  reset() { this.hist = new Float32Array(180); this.hi = 0; this.n = 0; this.floor = -60; this.level = 0; this.voiced = false; this.hang = 0; },
+  detach() {
+    try { this.src && this.src.disconnect(); } catch (_) {}
+    try { this.ac && this.ac.close(); } catch (_) {}
+    this.ac = null; this.src = null; this.an = null;
   },
-  detach() { try { this.src && this.src.disconnect(); } catch (_) {} this.src = null; this.an = null; },
-  /* קריאה אחת בכל פריים. מחזיר האם מדברים עכשיו, ורמת עוצמה 0..1 */
+  /* קריאה בכל פריים: האם מדברים עכשיו, ורמת עוצמה 0..1 */
   read(now, dt) {
     if (!this.an) return null;
     this.an.getFloatTimeDomainData(this.buf);
     let s = 0; const b = this.buf; for (let i = 0; i < b.length; i++) s += b[i] * b[i];
     const db = 10 * Math.log10(s / b.length + 1e-10);
-    if (db < this.floor) this.floor += (db - this.floor) * Math.min(1, dt * 5);
-    else this.floor += Math.min(db - this.floor, dt * 1.0);
-    this.floor = clamp(this.floor, -90, -32);
+    if (this.n === 0) this.hist.fill(db);
+    // רצפת הרעש היא אחוזון נמוך של שלוש השניות האחרונות, כך שדיבור ארוך לא מרים אותה
+    this.hist[(this.hi = (this.hi + 1) % this.hist.length)] = db; this.n++;
+    if (this.n % 6 === 1) { const a = Array.from(this.hist).sort((x, y) => x - y); this.floor = clamp(a[Math.floor(a.length * 0.12)], -90, -35); }
     const above = db - this.floor;
-    this.level += (clamp(above / 30, 0, 1) - this.level) * 0.4;
-    if (above > 11) { this.voiced = true; this.hang = 0.16; }
-    else if (above < 7) { this.hang -= dt; if (this.hang <= 0) this.voiced = false; }
-    // גרעיני הברות: שיאים במעטפת העוצמה
-    this.env = this.env * 0.45 + db * 0.55;
-    if (this.env > this.prevEnv) this.rising = true;
-    else if (this.rising && this.env < this.prevEnv) {
-      this.rising = false;
-      if (this.prevEnv - this.lastMin > 3 && this.prevEnv - this.floor > 12 && now - this.lastPeak > 0.11) { this.lastPeak = now; this.pk++; }
-      this.lastMin = this.prevEnv;
-    }
-    if (this.env < this.lastMin) this.lastMin = this.env;
-    this.prevEnv = this.env;
-    if (this.voiced) {
-      this.vt += dt;
-      if (this.vt >= 2.2) { const inst = this.pk / this.vt; this.rate = clamp(this.ready ? this.rate * 0.6 + inst * 0.4 : inst, 3.2, 6.8); this.ready = true; this.vt = 0; this.pk = 0; }
-    }
+    this.level += (clamp(above / 28, 0, 1) - this.level) * 0.5;
+    if (above > 9) { this.voiced = true; this.hang = 0.18; }
+    else if (above < 6) { this.hang -= dt; if (this.hang <= 0) this.voiced = false; }
     return { voiced: this.voiced, level: this.level };
   },
 };
@@ -301,7 +310,8 @@ const Shoot = {
   sid: null, W: [], p: 0, segs: [], stream: null, facing: 'user', mode: 'record',
   rec: null, recording: false, rehearsing: false, segStart: 0, chunks: [], stamps: {}, minP: 0,
   lines: [], lineOf: [], spans: [], lineEls: [], loopOn: false,
-  f: { prog: 0, gate: false, over: 0, sil: 0, snapped: false, autoAcc: 0 },
+  f: { prog: 0, gate: false, over: 0, sil: 0, snapped: false, autoAcc: 0, rate: 5.6, phraseVT: 0, phraseSyl: 1 },
+  asr: null, asrOff: false,
   lastAdvance: 0, lastCapKey: '',
 
   get running() { return this.recording || this.rehearsing; },
@@ -330,7 +340,7 @@ const Shoot = {
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: this.facing, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true },
       });
       const v = $('#cam'); v.srcObject = this.stream; v.classList.toggle('mirror', this.facing === 'user');
       await v.play().catch(() => {});
@@ -347,13 +357,17 @@ const Shoot = {
   layout() {
     const fs = settings.fontSize; const lh = Math.round(fs * 1.55);
     const pr = $('#prompter'); pr.style.setProperty('--pfs', fs + 'px'); pr.style.setProperty('--plh', lh + 'px');
-    const maxW = $('#pwin').clientWidth - 4;
-    const c = document.createElement('canvas').getContext('2d');
-    c.font = `600 ${fs}px ${getComputedStyle(document.body).fontFamily}`;
-    const sp = c.measureText(' ').width;
+    const win = $('#pwin'); const maxW = win.clientWidth - 8;
+    // מדידה בדיוק באותו פונט שמוצג על המסך
+    const meas = document.createElement('div'); meas.className = 'pl'; meas.style.cssText = 'position:absolute;visibility:hidden;left:0;top:0;width:auto';
+    meas.innerHTML = this.W.map((w) => `<span class="pw${w.brk ? ' brk' : ''}">${esc(w.text)}</span>`).join(' ') + '<span class="msp">&nbsp;</span>';
+    win.appendChild(meas);
+    const widths = $$('.pw', meas).map((e) => e.getBoundingClientRect().width);
+    const sp = meas.querySelector('.msp').getBoundingClientRect().width;
+    win.removeChild(meas);
     const lines = []; let line = [], lw = 0;
     this.W.forEach((w, i) => {
-      const ww = c.measureText(w.text + (w.brk ? ' ·' : '')).width;
+      const ww = widths[i];
       if (line.length && lw + sp + ww > maxW) { lines.push(line); line = []; lw = 0; }
       line.push(i); lw += (line.length > 1 ? sp : 0) + ww;
       if (isPhraseEnd(w)) { lines.push(line); line = []; lw = 0; }
@@ -375,7 +389,7 @@ const Shoot = {
     if (this.painted === p) return;
     const a = Math.min(p, this.painted < 0 ? 0 : this.painted), b = Math.max(p, this.painted < 0 ? this.W.length : this.painted);
     for (let i = Math.max(0, a - 1); i <= Math.min(this.W.length - 1, b + 1); i++) {
-      const el = this.spans[i]; el.classList.toggle('said', i < p); el.classList.toggle('now', i === p);
+      const el = this.spans[i]; el.classList.toggle('said', i < p); el.classList.toggle('now', i === p); if (i !== p) el.style.removeProperty('--pg');
     }
     this.painted = p;
     const li = this.curLine();
@@ -390,7 +404,7 @@ const Shoot = {
       this.minP = Math.min(this.minP, this.p);
       if (fromUser && this.p < prev) for (let i = this.p; i < prev; i++) delete this.stamps[i];
     }
-    if (fromUser) { this.f.prog = 0; this.f.gate = false; this.f.over = 0; }
+    if (fromUser) { this.f.prog = 0; this.f.gate = false; this.f.over = 0; this.newPhrase(); }
     this.lastAdvance = performance.now();
     this.paint();
   },
@@ -410,39 +424,97 @@ const Shoot = {
       return;
     }
     if (settings.mode !== 'voice' || !a) return;
+    const rate = f.rate * settings.pace;
     if (a.voiced) {
-      f.sil = 0; f.snapped = false;
-      const inc = dt * Pacer.rate * settings.pace;
+      f.sil = 0; f.snapped = false; f.phraseVT += dt;
+      const inc = dt * rate;
       if (f.gate) {
-        // בסוף משפט מחכים לנשימה. אם ממשיכים לדבר בלי עצירה, משחררים אחרי כמה הברות
-        f.over += inc;
-        if (f.over >= 3.2) { f.gate = false; f.prog = f.over; f.over = 0; this.stampCurrent(f.prog / Pacer.rate); }
-      } else {
-        this.stampCurrent();
-        f.prog += inc;
-      }
+        // הטקסט הגיע לסוף המשפט לפניכם: מחכים לנשימה. אם ממשיכים לדבר בלי עצירה, משחררים
+        f.over += dt;
+        if (f.over >= clamp(0.5 * f.gateVT, 0.9, 3.2)) { f.gate = false; f.prog = Math.min(3, f.over * rate * 0.5); f.over = 0; this.newPhrase(); this.stampCurrent(f.prog / rate); }
+      } else { this.stampCurrent(); f.prog += inc; }
       while (!f.gate && this.p < W.length && f.prog >= sylOf(W[this.p])) {
-        f.prog -= sylOf(W[this.p]);
-        const w = W[this.p];
+        f.prog -= sylOf(W[this.p]); const w = W[this.p];
         this.setPointer(this.p + 1);
-        if (isPhraseEnd(w)) { f.gate = true; f.over = f.prog; f.prog = 0; }
-        else this.stampCurrent(f.prog / Pacer.rate);
+        if (isPhraseEnd(w)) { f.gate = true; f.over = 0; f.gateVT = f.phraseVT; f.prog = 0; }
+        else this.stampCurrent(f.prog / rate);
       }
     } else {
       f.sil += dt;
-      if (f.gate && f.sil > 0.16) { f.gate = false; f.over = 0; f.prog = 0; }
-      // שתיקה באמצע משפט כשנשארו רק הברות בודדות: כנראה סיימתם אותו. קופצים לסופו
-      if (!f.gate && !f.snapped && f.sil > 0.4) {
+      if (f.gate && f.sil > 0.14) { this.learn(); f.gate = false; f.over = 0; f.prog = 0; this.newPhrase(); }
+      if (!f.gate && !f.snapped && f.sil > 0.42) {
         f.snapped = true;
-        let rem = -f.prog, k = this.p;
-        for (; k < W.length; k++) { rem += sylOf(W[k]); if (isPhraseEnd(W[k])) break; }
-        if (k < W.length && rem <= 3.4 && k >= this.p) {
+        let k = this.p, rem = -f.prog; for (; k < W.length; k++) { rem += sylOf(W[k]); if (isPhraseEnd(W[k])) break; }
+        const ratio = f.phraseVT > 0.3 ? f.phraseSyl / f.phraseVT / f.rate : 99;
+        const [lo, hi] = f.cal < 2 ? [0.55, 2.0] : [0.72, 1.45];
+        // עצרתם, ולפי הזמן שדיברתם סביר שסיימתם את המשפט: הטקסט מדלג לסופו ולומד את הקצב שלכם
+        if (k < W.length && ((rem <= 2.5 && ratio < 2.2) || (ratio >= lo && ratio <= hi && rem <= f.phraseSyl * 0.7))) {
           const t = this.recording ? this.segTime() - f.sil : 0;
-          for (let i = this.p; i <= k; i++) if (this.recording && this.stamps[i] == null) this.stamps[i] = Math.max(0, t - 0.12 * (k - i + 1));
-          this.setPointer(k + 1); f.prog = 0;
+          for (let i = this.p; i <= k; i++) if (this.recording && this.stamps[i] == null) this.stamps[i] = Math.max(0, t - 0.14 * (k - i + 1));
+          if (ratio >= lo && ratio <= hi) this.learn();
+          this.setPointer(k + 1); f.prog = 0; this.newPhrase();
         }
       }
     }
+    this.progBar();
+  },
+  newPhrase() {
+    const f = this.f; f.phraseVT = 0; let s = 0;
+    for (let k = this.p; k < this.W.length; k++) { s += sylOf(this.W[k]); if (isPhraseEnd(this.W[k])) break; }
+    f.phraseSyl = Math.max(1, s);
+  },
+  learn() {
+    const f = this.f; if (f.phraseVT < 0.5) return;
+    const implied = f.phraseSyl / f.phraseVT; if (implied < 3 || implied > 11) return;
+    f.rate = clamp(f.rate * 0.4 + implied * 0.6, 3.5, 9.5); f.cal = (f.cal || 0) + 1;
+    settings.rate = +f.rate.toFixed(2); saveSettings();
+  },
+  progBar() {
+    const el = this.spans[this.p]; if (!el) return;
+    const w = this.W[this.p]; const v = this.f.gate ? 0 : clamp(this.f.prog / sylOf(w), 0, 1);
+    el.style.setProperty('--pg', v.toFixed(2));
+  },
+
+  /* ---------- זיהוי מילים על אותו ערוץ שמע של ההקלטה (Chrome חדש) ---------- */
+  matchFrom(start, toks) {
+    let p = start; const W = this.W;
+    for (const tk of toks) {
+      const n = normWord(tk); if (!n) continue;
+      const lim = Math.min(W.length, p + 6);
+      for (let j = p; j < lim; j++) {
+        const wn = W[j].norm; if (!wn) continue;
+        if ((n.length <= 2 || wn.length <= 2) && j > p + 1) continue;
+        if (similar(n, wn)) { p = j + 1; break; }
+      }
+    }
+    return p;
+  },
+  startASR() {
+    const SRC = window.SpeechRecognition;
+    if (this.asrOff || !SRC || typeof SRC.available !== 'function' || !this.stream) return;
+    const track = this.stream.getAudioTracks()[0]; if (!track) return;
+    const st = { active: true, base: [], off: 0, r: new SRC() };
+    const r = st.r; r.lang = 'he-IL'; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+    r.onresult = (e) => {
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const key = st.off + i; if (st.base[key] == null) st.base[key] = Math.max(0, this.p - 3);
+        const np = this.matchFrom(st.base[key], e.results[i][0].transcript.split(/\s+/));
+        if (np > this.p && np - this.p <= 10) this.asrJump(np);
+      }
+    };
+    r.onerror = (ev) => { if (['not-allowed', 'service-not-allowed', 'language-not-supported', 'audio-capture', 'network'].includes(ev.error)) { st.active = false; this.asrOff = true; } };
+    r.onend = () => { if (st.active && this.running) { st.off += 1000; setTimeout(() => { if (st.active && this.running) try { r.start(track); } catch (_) {} }, 60); } };
+    try { r.start(track); } catch (e) { this.asrOff = true; return; }
+    this.asr = st;
+  },
+  stopASR() { if (this.asr) { this.asr.active = false; try { this.asr.r.abort(); } catch (_) {} this.asr = null; } },
+  asrJump(np) {
+    const from = this.p; const t = this.recording ? this.segTime() : 0;
+    let crossed = false;
+    for (let i = from; i < np; i++) { if (isPhraseEnd(this.W[i])) crossed = true; if (this.recording && this.stamps[i] == null) this.stamps[i] = Math.max(0, t - 0.28 * (np - i)); }
+    this.f.rate = clamp(this.f.rate * 1.04, 3.5, 8.5);
+    this.setPointer(np); this.f.prog = 0; this.f.gate = false; this.f.over = 0;
+    if (crossed) this.newPhrase();
   },
 
   /* ---------- כתוביות חיות בזמן הצילום ---------- */
@@ -452,8 +524,9 @@ const Shoot = {
   },
   drawCap(now) {
     const cv = $('#live-cap'); const ctx = cv.getContext('2d');
-    const q = this.p - 1;
-    const show = this.running && q >= 0 && now - this.lastAdvance < 1400;
+    // בזמן דיבור מודגשת המילה שנאמרת עכשיו; בשתיקה, האחרונה שנאמרה
+    const q = Pacer.voiced && !this.f.gate && this.p < this.W.length ? this.p : this.p - 1;
+    const show = this.running && q >= 0 && (Pacer.voiced || now - this.lastAdvance < 1400);
     const age = (now - this.lastAdvance) / 1000;
     const key = show ? q + ':' + settings.style + ':' + (age < 0.2 ? Math.round(age * 60) : 'x') : 'none';
     if (key === this.lastCapKey) return;
@@ -486,9 +559,11 @@ const Shoot = {
     el.hidden = true; const ok = this.counting; this.counting = false; return ok;
   },
   startRun() {
-    this.f = { prog: 0, gate: false, over: 0, sil: 0, snapped: false, autoAcc: 0 };
+    this.f = { prog: 0, gate: false, over: 0, sil: 0, snapped: false, autoAcc: 0, rate: settings.rate || 5.0, phraseVT: 0, phraseSyl: 1, cal: 0 };
+    this.newPhrase();
     this.runStart = performance.now(); this.runW0 = this.p;
-    audioCtx();
+    Pacer.wake();
+    if (settings.mode === 'voice') this.startASR();
     $('#s-shoot').classList.add('rec');
     haptic(14);
   },
@@ -511,7 +586,7 @@ const Shoot = {
   stopSeg() {
     if (!this.recording) return Promise.resolve();
     const dur = this.segTime();
-    this.recording = false;
+    this.recording = false; this.stopASR();
     $('#s-shoot').classList.remove('rec'); haptic(10);
     const rec = this.rec; const w0 = Math.min(this.minP, this.segW0), w1 = this.p, eye = this.eyeAcc, stamps = this.stamps, mirror = this.facing === 'user';
     const saved = new Promise((resolve) => {
@@ -528,7 +603,7 @@ const Shoot = {
   },
   startRehearse() { if (!this.canStart()) return; this.rehearsing = true; this.startRun(); },
   stopRehearse() {
-    this.rehearsing = false; $('#s-shoot').classList.remove('rec');
+    this.rehearsing = false; this.stopASR(); $('#s-shoot').classList.remove('rec');
     const min = (performance.now() - this.runStart) / 60000; const n = this.p - this.runW0;
     if (n > 4 && min > 0.05) {
       const wpm = Math.round(n / min);
@@ -648,7 +723,7 @@ leaveHooks.shoot = () => Shoot.leave();
   const btn = $('#sh-rec'); let downAt = 0, startedHere = false, pendingTap = false;
   btn.addEventListener('pointerdown', (e) => {
     e.preventDefault(); downAt = performance.now(); startedHere = false; pendingTap = false;
-    const S = Shoot;
+    const S = Shoot; Pacer.wake();
     if (S.counting) { S.counting = false; return; }
     if (S.mode === 'rehearse') { S.rehearsing ? S.stopRehearse() : S.startRehearse(); return; }
     if (S.recording) { S.stopSeg(); return; }
@@ -665,7 +740,8 @@ leaveHooks.shoot = () => Shoot.leave();
 })();
 
 $('#sh-del').addEventListener('click', () => Shoot.delLast());
-$('#sh-done').addEventListener('click', async () => { await Shoot.stopSeg(); audioCtx(); Player.init(); Player.audio(); Review.fromShoot(Shoot.sid); });
+$('#sh-done').addEventListener('click', async () => { await Shoot.stopSeg(); Exporter.prime(); Review.fromShoot(Shoot.sid); });
+$('#s-shoot').addEventListener('pointerdown', () => Pacer.wake());
 $('#sh-close').addEventListener('click', () => { const n = Shoot.segs.length; history.state ? history.back() : goHome(); if (n) toast('הטיוטה נשמרה'); });
 $('#sh-flip').addEventListener('click', () => { if (Shoot.running) return; Shoot.facing = Shoot.facing === 'user' ? 'environment' : 'user'; Shoot.startCam(); haptic(); });
 $('#modes').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { Shoot.setMode(b.dataset.m); haptic(); toast(b.dataset.m === 'rehearse' ? 'חזרה: הטקסט רץ בלי הקלטה' : 'צילום'); } });
@@ -751,7 +827,8 @@ const Eye = {
    ========================================================= */
 async function analyzeAudio(blob, fallbackDur) {
   try {
-    const buf = await audioCtx().decodeAudioData(await blob.arrayBuffer());
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const buf = await new OAC(1, 44100, 44100).decodeAudioData(await blob.arrayBuffer());
     const data = buf.getChannelData(0); const sr = buf.sampleRate; const hop = Math.round(sr * 0.02);
     const db = [];
     for (let i = 0; i + hop <= data.length; i += hop) { let s = 0; for (let j = i; j < i + hop; j++) s += data[j] * data[j]; db.push(10 * Math.log10(s / hop + 1e-10)); }
@@ -962,15 +1039,15 @@ function drawBrand(ctx, W, H) {
   ctx.fillText(h, W / 2, H * 0.94);
   ctx.restore();
 }
-function render(G, target) {
+function render(G, target, pl = Player) {
   const cv = target || $('#rv-canvas'); const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
-  if (G == null) G = Player.G();
-  const v = Player.v;
+  if (G == null) G = pl.G();
+  const v = pl.v;
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
   if (v && v.readyState >= 2 && v.videoWidth) {
     const sc = Math.max(W / v.videoWidth, H / v.videoHeight);
     const dw = v.videoWidth * sc, dh = v.videoHeight * sc;
-    const seg = R.tl[Player.k]; const mirror = seg && R.clips[seg.clip] && R.clips[seg.clip].mirror;
+    const seg = R.tl[pl.k]; const mirror = seg && R.clips[seg.clip] && R.clips[seg.clip].mirror;
     ctx.save();
     if (mirror) { ctx.translate(W, 0); ctx.scale(-1, 1); }
     ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
@@ -1039,83 +1116,85 @@ function computeGroups() {
   R.groups = out;
 }
 
-const Player = {
-  v: null, k: 0, playing: false, busy: false, hooks: null, target: null, onEnd: null, onFrame: null, out: null, dest: null, src: null,
-  init() {
-    if (this.v) return;
-    const v = document.createElement('video'); v.playsInline = true; v.preload = 'auto'; v.setAttribute('playsinline', '');
-    this.v = v;
-  },
-  audio() {
-    this.init();
-    const ctx = audioCtx();
-    if (this.src) return;
-    this.src = ctx.createMediaElementSource(this.v);
-    this.out = ctx.createGain(); this.src.connect(this.out); this.out.connect(ctx.destination);
-    this.dest = ctx.createMediaStreamDestination(); this.src.connect(this.dest);
-  },
-  async load(url) {
-    const v = this.v; if (v._url === url) return;
-    v._url = url; v.src = url;
-    await waitEvt(v, 'loadedmetadata');
-    if (!isFinite(v.duration)) { v.currentTime = 1e7; await waitEvt(v, 'durationchange', 2500); v.currentTime = 0; await waitEvt(v, 'seeked', 2500); }
-  },
-  async seekVideo(t) {
-    const v = this.v; if (Math.abs(v.currentTime - t) < 0.015 && v.readyState >= 2) return;
-    v.currentTime = t; await waitEvt(v, 'seeked', 3000);
-  },
-  G() {
-    const s = R.tl[this.k]; if (!s || !this.v) return 0;
-    return clamp(s.g + (this.v.currentTime - s.a), s.g, s.g + (s.b - s.a));
-  },
-  async seek(G) {
-    if (!R.tl.length) return;
-    G = clamp(G, 0, Math.max(0, R.total - 0.01));
-    let k = R.tl.findIndex((s) => G < s.g + (s.b - s.a)); if (k < 0) k = R.tl.length - 1;
-    const s = R.tl[k]; this.k = k;
-    await this.load(R.clips[s.clip].url);
-    await this.seekVideo(s.a + (G - s.g));
-    render(G, this.target);
-  },
-  async play() {
-    if (this.playing || !R.tl.length) return false;
-    this.audio();
-    if (this.G() >= R.total - 0.08) await this.seek(0);
-    this.playing = true; $('#stage').classList.add('playing');
-    try { await this.v.play(); } catch (e) { this.pause(); return false; }
-    const loop = () => {
-      if (!this.playing) return;
+function makePlayer(ui) {
+  return {
+    ui, v: null, k: 0, playing: false, busy: false, hooks: null, target: null, onEnd: null, onFrame: null, dest: null, src: null,
+    init() {
+      if (this.v) return;
+      const v = document.createElement('video'); v.playsInline = true; v.preload = 'auto'; v.setAttribute('playsinline', '');
+      this.v = v;
+    },
+    /* רק לנגן הייצוא: השמע נשלח להקלטה ולא לרמקול */
+    audio(ac) {
+      this.init(); if (this.src) return;
+      this.src = ac.createMediaElementSource(this.v);
+      this.dest = ac.createMediaStreamDestination(); this.src.connect(this.dest);
+    },
+    async load(url) {
+      this.init();
+      const v = this.v; if (v._url === url) return;
+      v._url = url; v.src = url;
+      await waitEvt(v, 'loadedmetadata');
+      if (!isFinite(v.duration)) { v.currentTime = 1e7; await waitEvt(v, 'durationchange', 2500); v.currentTime = 0; await waitEvt(v, 'seeked', 2500); }
+    },
+    async seekVideo(t) {
+      const v = this.v; if (Math.abs(v.currentTime - t) < 0.015 && v.readyState >= 2) return;
+      v.currentTime = t; await waitEvt(v, 'seeked', 3000);
+    },
+    G() {
+      const s = R.tl[this.k]; if (!s || !this.v) return 0;
+      return clamp(s.g + (this.v.currentTime - s.a), s.g, s.g + (s.b - s.a));
+    },
+    async seek(G) {
+      if (!R.tl.length) return;
+      G = clamp(G, 0, Math.max(0, R.total - 0.01));
+      let k = R.tl.findIndex((s) => G < s.g + (s.b - s.a)); if (k < 0) k = R.tl.length - 1;
+      const s = R.tl[k]; this.k = k;
+      await this.load(R.clips[s.clip].url);
+      await this.seekVideo(s.a + (G - s.g));
+      render(G, this.target, this);
+    },
+    async play() {
+      if (this.playing || !R.tl.length) return false;
+      this.init();
+      if (this.G() >= R.total - 0.08) await this.seek(0);
+      this.playing = true; if (this.ui) $('#stage').classList.add('playing');
+      try { await this.v.play(); } catch (e) { this.pause(); return false; }
+      const loop = () => {
+        if (!this.playing) return;
+        requestAnimationFrame(loop);
+        if (this.busy) return;
+        const s = R.tl[this.k];
+        if (this.v.currentTime >= s.b - 0.03 || this.v.ended) { this.advance(); return; }
+        render(null, this.target, this);
+        if (this.onFrame) this.onFrame();
+      };
       requestAnimationFrame(loop);
-      if (this.busy) return;
-      const s = R.tl[this.k];
-      if (this.v.currentTime >= s.b - 0.03 || this.v.ended) { this.advance(); return; }
-      render(null, this.target);
-      if (this.onFrame) this.onFrame();
-    };
-    requestAnimationFrame(loop);
-    return true;
-  },
-  pause() { this.playing = false; if (this.v) this.v.pause(); $('#stage').classList.remove('playing'); },
-  async advance() {
-    this.busy = true;
-    const k = this.k + 1;
-    if (k >= R.tl.length) {
-      this.pause(); this.busy = false; render(R.total - 0.001, this.target);
-      const f = this.onEnd;
-      if (f) f(); else if (current === 'review') { await this.seek(0); this.play(); }
-      return;
-    }
-    const cur = R.tl[this.k], nx = R.tl[k]; this.k = k;
-    if (nx.clip === cur.clip && Math.abs(this.v.currentTime - nx.a) < 0.06) { this.busy = false; return; }
-    if (this.hooks) this.hooks.pause();
-    this.v.pause();
-    await this.load(R.clips[nx.clip].url);
-    await this.seekVideo(nx.a);
-    if (this.playing) await this.v.play().catch(() => {});
-    if (this.hooks) this.hooks.resume();
-    this.busy = false;
-  },
-};
+      return true;
+    },
+    pause() { this.playing = false; if (this.v) this.v.pause(); if (this.ui) $('#stage').classList.remove('playing'); },
+    async advance() {
+      this.busy = true;
+      const k = this.k + 1;
+      if (k >= R.tl.length) {
+        this.pause(); this.busy = false; render(R.total - 0.001, this.target, this);
+        const f = this.onEnd;
+        if (f) f(); else if (this.ui && current === 'review') { await this.seek(0); this.play(); }
+        return;
+      }
+      const cur = R.tl[this.k], nx = R.tl[k]; this.k = k;
+      if (nx.clip === cur.clip && Math.abs(this.v.currentTime - nx.a) < 0.06) { this.busy = false; return; }
+      if (this.hooks) this.hooks.pause();
+      this.v.pause();
+      await this.load(R.clips[nx.clip].url);
+      await this.seekVideo(nx.a);
+      if (this.playing) await this.v.play().catch(() => {});
+      if (this.hooks) this.hooks.resume();
+      this.busy = false;
+    },
+  };
+}
+const Player = makePlayer(true);
 
 const Review = {
   lastG: -1, lastGroup: -2, openSheet: null,
@@ -1148,6 +1227,7 @@ const Review = {
   async open() {
     show('review');
     Player.init(); Player.target = null; Player.hooks = null; Player.onEnd = null; Player.onFrame = null;
+    if (Exporter.pl) { Exporter.pl.v._url = null; }
     this.sheet(null);
     $('#rv-trim').checked = R.trim; $('#rv-hook').checked = R.hook; $('#rv-brand').checked = R.brand; $('#rv-caps').checked = R.caps;
     $('#rv-pos').value = R.pos;
@@ -1308,17 +1388,28 @@ $('#ts-cancel').addEventListener('click', () => { Player.onEnd = null; Player.pa
    ייצוא
    ========================================================= */
 const Exporter = {
-  rec: null, cancelled: false, blob: null, url: null, ext: 'mp4',
+  rec: null, cancelled: false, blob: null, url: null, ext: 'mp4', ac: null, pl: null,
+  /* נקרא מתוך הקשה של המשתמש, כדי שהדפדפן יאפשר את ערוץ השמע של הייצוא */
+  prime() {
+    try {
+      if (!this.ac) this.ac = newAC();
+      if (this.ac.state !== 'running') this.ac.resume().catch(() => {});
+      if (!this.pl) { this.pl = makePlayer(false); this.pl.audio(this.ac); }
+    } catch (e) { console.warn(e); }
+  },
   async run() {
     if (!R.tl.length) return;
     if (!window.MediaRecorder) { toast('הדפדפן הזה לא תומך בייצוא וידאו'); return; }
-    Review.sheet(null);
-    Player.pause(); Player.audio();
+    this.prime();
+    const pl = this.pl;
+    Review.sheet(null); Player.pause();
+    if (this.ac.state !== 'running') { await Promise.race([this.ac.resume(), new Promise((r) => setTimeout(r, 800))]).catch(() => {}); }
+    if (this.ac.state !== 'running') { toast('הדפדפן חסם את השמע. הקישו שוב על ייצוא.'); return; }
     const W = settings.quality === 720 ? 720 : 1080, H = W === 720 ? 1280 : 1920;
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
     const prev = $('#rv-canvas'); const pctx = prev.getContext('2d');
     const stream = cv.captureStream(30);
-    Player.dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+    pl.dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
     const mime = pickMime('export');
     this.cancelled = false; this.ui('run');
     let rec;
@@ -1326,17 +1417,16 @@ const Exporter = {
     catch (e) { toast('הייצוא נכשל בדפדפן הזה'); this.ui('close'); return; }
     this.rec = rec; const chunks = [];
     rec.ondataavailable = (e) => e.data && e.data.size && chunks.push(e.data);
-    Player.target = cv; await Player.seek(0);
-    Player.out.gain.value = 0;
+    pl.target = cv; await pl.seek(0);
     Wake.on();
     const done = new Promise((res) => { rec.onstop = res; });
-    Player.hooks = { pause: () => { try { rec.state === 'recording' && rec.pause(); } catch (_) {} }, resume: () => { try { rec.state === 'paused' && rec.resume(); } catch (_) {} } };
-    Player.onFrame = () => { pctx.drawImage(cv, 0, 0, prev.width, prev.height); this.progress(clamp(Player.G() / R.total, 0, 1)); };
-    Player.onEnd = () => { setTimeout(() => { try { rec.state !== 'inactive' && rec.stop(); } catch (_) {} }, 250); };
+    pl.hooks = { pause: () => { try { rec.state === 'recording' && rec.pause(); } catch (_) {} }, resume: () => { try { rec.state === 'paused' && rec.resume(); } catch (_) {} } };
+    pl.onFrame = () => { pctx.drawImage(cv, 0, 0, prev.width, prev.height); this.progress(clamp(pl.G() / R.total, 0, 1)); };
+    pl.onEnd = () => { setTimeout(() => { try { rec.state !== 'inactive' && rec.stop(); } catch (_) {} }, 250); };
     rec.start(500);
-    await Player.play();
+    await pl.play();
     await done;
-    Player.hooks = null; Player.onFrame = null; Player.onEnd = null; Player.target = null; Player.out.gain.value = 1; Wake.off();
+    pl.hooks = null; pl.onFrame = null; pl.onEnd = null; Wake.off();
     render(Player.G());
     if (this.cancelled) { this.ui('close'); return; }
     const type = (rec.mimeType || mime || 'video/webm').split(';')[0];
@@ -1367,11 +1457,11 @@ const Exporter = {
     } else this.progress(0);
   },
   cancel() {
-    if (this.rec && this.rec.state !== 'inactive') { this.cancelled = true; Player.pause(); try { this.rec.stop(); } catch (_) {} }
+    if (this.rec && this.rec.state !== 'inactive') { this.cancelled = true; this.pl.pause(); try { this.rec.stop(); } catch (_) {} }
     else { $('#ex-result').pause(); this.ui('close'); if (current === 'review') Player.play(); }
   },
 };
-$('#rv-export').addEventListener('click', () => Exporter.run());
+$('#rv-export').addEventListener('click', () => { Exporter.prime(); Exporter.run(); });
 $('#ex-close').addEventListener('click', () => Exporter.cancel());
 
 /* =========================================================
@@ -1402,7 +1492,7 @@ const Import = {
 $('#imp-file').addEventListener('change', (e) => Import.setFile(e.target.files[0]));
 $('#imp-text').addEventListener('input', () => Import.check());
 $('#imp-pick').addEventListener('change', (e) => { const s = scriptById(e.target.value); if (s) { $('#imp-text').value = s.text; Import.check(); } e.target.value = ''; });
-$('#imp-go').addEventListener('click', () => { audioCtx(); Player.audio(); Review.fromImport(Import.file, $('#imp-text').value, Import.dur); });
+$('#imp-go').addEventListener('click', () => { Exporter.prime(); Review.fromImport(Import.file, $('#imp-text').value, Import.dur); });
 const drop = $('#drop');
 ['dragover', 'dragenter'].forEach((ev) => drop.addEventListener(ev, (e) => e.preventDefault()));
 drop.addEventListener('drop', (e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f && f.type.startsWith('video')) Import.setFile(f); });
