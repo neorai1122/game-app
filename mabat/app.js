@@ -61,32 +61,40 @@ const DB = {
   _p: null,
   open() {
     if (!this._p) this._p = new Promise((res, rej) => {
-      const r = indexedDB.open('mabat', 1);
-      r.onupgradeneeded = () => { const s = r.result.createObjectStore('segs', { keyPath: 'id' }); s.createIndex('sid', 'sid'); };
+      const r = indexedDB.open('mabat', 2);
+      r.onupgradeneeded = () => {
+        const d = r.result;
+        if (!d.objectStoreNames.contains('segs')) { const s = d.createObjectStore('segs', { keyPath: 'id' }); s.createIndex('sid', 'sid'); }
+        if (!d.objectStoreNames.contains('videos')) d.createObjectStore('videos', { keyPath: 'id' });
+      };
       r.onsuccess = () => res(r.result);
       r.onerror = () => rej(r.error);
     });
     return this._p;
   },
-  async run(mode, fn) {
+  async run(mode, fn, store = 'segs') {
     try {
       const d = await this.open();
       return await new Promise((res, rej) => {
-        const t = d.transaction('segs', mode); const req = fn(t.objectStore('segs'));
+        const t = d.transaction(store, mode); const req = fn(t.objectStore(store));
         t.oncomplete = () => res(req ? req.result : undefined); t.onerror = () => rej(t.error);
       });
     } catch (e) { console.warn('IDB', e); return undefined; }
   },
-  put(o) { return this.run('readwrite', (s) => s.put(o)); },
-  del(id) { return this.run('readwrite', (s) => s.delete(id)); },
+  put(o, store) { return this.run('readwrite', (s) => s.put(o), store); },
+  del(id, store) { return this.run('readwrite', (s) => s.delete(id), store); },
   async bySid(sid) { const a = (await this.run('readonly', (s) => s.index('sid').getAll(sid))) || []; return a.sort((x, y) => x.n - y.n); },
-  async all() { return (await this.run('readonly', (s) => s.getAll())) || []; },
+  async all(store) { return (await this.run('readonly', (s) => s.getAll(), store)) || []; },
   async delSid(sid) { const a = await this.bySid(sid); for (const x of a) await this.del(x.id); },
 };
 
-const DEFAULTS = { rate: 5.0, handle: '', accent: '#ffd60a', quality: 1080, wpm: 140, pace: 1, fontSize: 22, mode: 'voice', timer: 3, maxDur: 60, eye: true, style: 'classic', pos: 72 };
-const settings = Object.assign({}, DEFAULTS, LS.get('settings2', {}));
-const saveSettings = () => LS.set('settings2', settings);
+const DEFAULTS = { rate: 5.0, handle: '', accent: '#ffd60a', quality: 1080, wpm: 140, pace: 1, fontSize: 22, mode: 'voice', timer: 3, maxDur: 60, eye: true, style: 'classic', pos: 64, view: 'focus', light: false, look: 'natural', zoom: true, bar: false };
+const settings = (() => {
+  const old = LS.get('settings2', {}); const keep = {};
+  ['rate', 'handle', 'accent', 'quality', 'pace', 'wpm', 'style', 'mode', 'timer', 'maxDur', 'eye'].forEach((k) => { if (old[k] !== undefined) keep[k] = old[k]; });
+  return Object.assign({}, DEFAULTS, keep, LS.get('settings3', {}));
+})();
+const saveSettings = () => LS.set('settings3', settings);
 const ACCENTS = ['#ffd60a', '#30d158', '#0a84ff', '#ff375f', '#ffffff'];
 
 let scripts = LS.get('scripts', null);
@@ -135,6 +143,7 @@ function sylOf(w) {
   return Math.max(1, n.length * 0.5);
 }
 const isPhraseEnd = (w) => !!(w && (w.brk || w.end));
+const capText = (t) => t.replace(/[.,;:…"'״]+$/, '') || t;
 function lev(a, b) {
   if (Math.abs(a.length - b.length) > 2) return 9;
   const d = Array.from({ length: b.length + 1 }, (_, i) => i);
@@ -182,6 +191,11 @@ const Home = {
     const segs = await DB.all();
     const by = {};
     segs.forEach((s) => { (by[s.sid] = by[s.sid] || { n: 0, d: 0 }); by[s.sid].n++; by[s.sid].d += s.dur; });
+    const vids = (await DB.all('videos')).sort((a, b) => b.created - a.created);
+    this.vids = vids;
+    $('#vids-h').hidden = $('#vids').hidden = !vids.length;
+    $('#count-vids').textContent = vids.length || '';
+    $('#vids').innerHTML = vids.map((v) => `<button class="vid" data-id="${v.id}" aria-label="סרטון">${v.poster ? `<img src="${v.poster}" alt="">` : ''}<span>${fmt(v.dur)}</span></button>`).join('');
     scripts.sort((a, b) => b.updated - a.updated);
     $('#count-scripts').textContent = scripts.length || '';
     const ul = $('#scripts');
@@ -195,6 +209,7 @@ const Home = {
   },
 };
 $('#scripts').addEventListener('click', (e) => { const b = e.target.closest('.script'); if (b) Editor.open(b.dataset.id); });
+$('#vids').addEventListener('click', (e) => { const b = e.target.closest('.vid'); if (!b) return; const v = (Home.vids || []).find((x) => x.id === b.dataset.id); if (v) Exporter.openSaved(v); });
 $('#btn-new').addEventListener('click', () => {
   const s = { id: uid(), title: '', text: '', updated: Date.now() };
   scripts.unshift(s); saveScripts(); Editor.open(s.id, true);
@@ -343,7 +358,10 @@ const Shoot = {
         audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true },
       });
       const v = $('#cam'); v.srcObject = this.stream; v.classList.toggle('mirror', this.facing === 'user');
+      const refit = () => { v.style.objectFit = 'fill'; requestAnimationFrame(() => requestAnimationFrame(() => { v.style.objectFit = ''; })); };
+      v.onresize = refit; v.onloadedmetadata = refit;
       await v.play().catch(() => {});
+      [150, 600, 1500].forEach((ms) => setTimeout(refit, ms));
       Pacer.attach(this.stream);
       this.hint('', false);
     } catch (e) {
@@ -355,8 +373,9 @@ const Shoot = {
 
   /* ---------- פרומפטר ---------- */
   layout() {
-    const fs = settings.fontSize; const lh = Math.round(fs * 1.55);
-    const pr = $('#prompter'); pr.style.setProperty('--pfs', fs + 'px'); pr.style.setProperty('--plh', lh + 'px');
+    const focus = settings.view === 'focus';
+    const fs = settings.fontSize + (focus ? 6 : 0); const lh = Math.round(fs * 1.5);
+    const pr = $('#prompter'); pr.classList.toggle('focus', focus); pr.style.setProperty('--pfs', fs + 'px'); pr.style.setProperty('--plh', lh + 'px');
     const win = $('#pwin'); const maxW = win.clientWidth - 8;
     // מדידה בדיוק באותו פונט שמוצג על המסך
     const meas = document.createElement('div'); meas.className = 'pl'; meas.style.cssText = 'position:absolute;visibility:hidden;left:0;top:0;width:auto';
@@ -394,7 +413,7 @@ const Shoot = {
     this.painted = p;
     const li = this.curLine();
     this.lineEls.forEach((el, k) => el.classList.toggle('cur', k === li));
-    $('#ptrack').style.transform = `translateY(${(1 - li) * this.lh}px)`;
+    $('#ptrack').style.transform = `translateY(${((settings.view === 'focus' ? 0 : 1) - li) * this.lh}px)`;
   },
   skipEmpty() { while (this.p < this.W.length && !this.W[this.p].norm) this.p++; },
   setPointer(p, fromUser) {
@@ -539,7 +558,7 @@ const Shoot = {
     const items = [];
     for (let i = g0; i < Math.min(W.length, g0 + st.max); i++) {
       if (i > g0 && isPhraseEnd(W[i - 1])) break;
-      items.push({ text: W[i].text, emph: W[i].emph, active: i === q, age, future: i > q });
+      items.push({ text: capText(W[i].text), emph: W[i].emph, active: i === q, age, future: i > q });
     }
     drawGroup(ctx, cv.width, cv.height, items, settings.style, cv.height * (settings.pos / 100), settings.accent, 1, cv.width / 1080);
   },
@@ -684,7 +703,7 @@ const Shoot = {
           let msg = '';
           if (luma < 45) msg = 'חשוך. פנו לחלון או למנורה';
           else if (settings.eye && Eye.lm && !Eye.face) msg = 'לא רואים את הפנים';
-          else if (settings.eye && Eye.nose && (Eye.nose.x < 0.3 || Eye.nose.x > 0.7)) msg = 'זוזו קצת למרכז';
+          else if (settings.eye && Eye.nose && (Eye.nose.x < 0.2 || Eye.nose.x > 0.8)) msg = 'זוזו קצת למרכז';
           this.hint(msg);
         } catch (_) {}
       } else if (this.running && !this._sticky) this.hint('');
@@ -705,6 +724,9 @@ const Shoot = {
     $('#sh-timer-l').textContent = settings.timer ? settings.timer + ' שנ׳' : 'כבוי';
     $('#sh-len-l').textContent = settings.maxDur >= 60 ? settings.maxDur / 60 + ' דק׳' : settings.maxDur + ' שנ׳';
     $('#sh-eye').classList.toggle('on', settings.eye);
+    $('#sh-view-l').textContent = settings.view === 'focus' ? 'מיקוד' : 'שורות';
+    $('#sh-light').classList.toggle('on', settings.light);
+    $('#ringlight').hidden = !settings.light;
     saveSettings();
   },
   leave() {
@@ -752,6 +774,8 @@ $('#sh-mode').addEventListener('click', () => {
 $('#sh-size').addEventListener('click', () => { const o = [18, 22, 26, 30]; settings.fontSize = o[(o.indexOf(settings.fontSize) + 1) % o.length]; Shoot.applyRail(); Shoot.layout(); haptic(); });
 $('#sh-timer').addEventListener('click', () => { const o = [0, 3, 10]; settings.timer = o[(o.indexOf(settings.timer) + 1) % o.length]; Shoot.applyRail(); haptic(); });
 $('#sh-len').addEventListener('click', () => { const o = [15, 60, 180]; settings.maxDur = o[(o.indexOf(settings.maxDur) + 1) % o.length]; Shoot.applyRail(); Shoot.renderSegs(); haptic(); });
+$('#sh-view').addEventListener('click', () => { settings.view = settings.view === 'focus' ? 'lines' : 'focus'; Shoot.applyRail(); Shoot.layout(); haptic(); toast(settings.view === 'focus' ? 'מיקוד: הטקסט בנקודה אחת מתחת לעדשה' : 'שורות: שלוש שורות גוללות'); });
+$('#sh-light').addEventListener('click', () => { settings.light = !settings.light; Shoot.applyRail(); haptic(); if (settings.light) toast('תאורה: הגבירו את בהירות המסך'); });
 $('#sh-eye').addEventListener('click', () => { settings.eye = !settings.eye; Shoot.applyRail(); if (settings.eye) Eye.load(); haptic(); });
 
 /* גרירת הפרומפטר למעלה ולמטה, והקשה על מילה כדי לקפוץ אליה */
@@ -1008,6 +1032,23 @@ const R = {
   from: 'shoot', sid: null, clips: [], words: [], tl: [], total: 0, groups: [],
   pos: settings.pos, trim: true, hook: true, hookText: '', brand: true, caps: true, eye: null,
 };
+const LOOKS = {
+  natural: { name: 'טבעי', f: 'none' },
+  warm: { name: 'חם', f: 'saturate(1.14) sepia(.13) brightness(1.04) contrast(1.03)' },
+  cine: { name: 'קולנועי', f: 'contrast(1.14) saturate(.86) brightness(.97)', vignette: true },
+  vivid: { name: 'חי', f: 'saturate(1.32) contrast(1.08)' },
+  bw: { name: 'שחור־לבן', f: 'grayscale(1) contrast(1.18)', vignette: true },
+};
+if (!LOOKS[settings.look]) settings.look = 'natural';
+/* תקריב עדין שמתחלף עם כל שורת כתוביות */
+function zoomAt(G) {
+  const gs = R.groups; let lo = 0, hi = gs.length - 1, i = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (gs[m].start <= G) { i = m; lo = m + 1; } else hi = m - 1; }
+  if (i < 0) return 1;
+  const tgt = (j) => (j < 0 ? 1 : [1, 1.09, 1.04][j % 3]);
+  const k = clamp((G - gs[i].start) / 0.18, 0, 1); const e = 1 - Math.pow(1 - k, 3);
+  return tgt(i - 1) + (tgt(i) - tgt(i - 1)) * e;
+}
 
 function drawHook(ctx, W, H, G, accent) {
   if (!R.hook || !R.hookText || G > 2.4) return;
@@ -1046,12 +1087,22 @@ function render(G, target, pl = Player) {
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
   if (v && v.readyState >= 2 && v.videoWidth) {
     const sc = Math.max(W / v.videoWidth, H / v.videoHeight);
-    const dw = v.videoWidth * sc, dh = v.videoHeight * sc;
+    const z = R.zoom ? zoomAt(G) : 1;
+    const bw = v.videoWidth * sc, bh = v.videoHeight * sc;
+    const X = W / 2, Y = H * 0.4; // נקודת העיגון של התקריב: בערך גובה הפנים
+    const dw = bw * z, dh = bh * z, dx = X - (X - (W - bw) / 2) * z, dy = Y - (Y - (H - bh) / 2) * z;
     const seg = R.tl[pl.k]; const mirror = seg && R.clips[seg.clip] && R.clips[seg.clip].mirror;
+    const look = LOOKS[settings.look] || LOOKS.natural;
     ctx.save();
+    if (look.f !== 'none') ctx.filter = look.f;
     if (mirror) { ctx.translate(W, 0); ctx.scale(-1, 1); }
-    ctx.drawImage(v, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    ctx.drawImage(v, mirror ? W - dx - dw : dx, dy, dw, dh);
     ctx.restore();
+    if (look.vignette) {
+      const g = ctx.createRadialGradient(W / 2, H * 0.45, H * 0.25, W / 2, H * 0.45, H * 0.75);
+      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.45)');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    }
   }
   const accent = settings.accent;
   if (R.caps) {
@@ -1059,12 +1110,17 @@ function render(G, target, pl = Player) {
     if (gi >= 0) {
       const gr = R.groups[gi]; const items = [];
       let act = -1; for (let i = gr.i0; i < gr.i1; i++) if (R.words[i].g <= G + 0.02) act = i;
-      for (let i = gr.i0; i < gr.i1; i++) { const w = R.words[i]; items.push({ text: w.text, emph: w.emph, active: i === act, age: G - w.g, future: i > act }); }
+      for (let i = gr.i0; i < gr.i1; i++) { const w = R.words[i]; items.push({ text: capText(w.text), emph: w.emph, active: i === act, age: G - w.g, future: i > act }); }
       drawGroup(ctx, W, H, items, settings.style, H * (R.pos / 100), accent, clamp((G - gr.start) / 0.08, 0, 1));
     }
   }
   drawHook(ctx, W, H, G, accent);
   drawBrand(ctx, W, H);
+  if (R.bar && R.total) {
+    const s = W / 1080; const f = clamp(G / R.total, 0, 1);
+    ctx.fillStyle = 'rgba(255,255,255,.25)'; ctx.fillRect(0, 0, W, 9 * s);
+    ctx.fillStyle = accent; ctx.fillRect(W * (1 - f), 0, W * f, 9 * s);
+  }
   if (!target || target.id === 'rv-canvas') Review.ui(G);
   return G;
 }
@@ -1229,7 +1285,9 @@ const Review = {
     Player.init(); Player.target = null; Player.hooks = null; Player.onEnd = null; Player.onFrame = null;
     if (Exporter.pl) { Exporter.pl.v._url = null; }
     this.sheet(null);
+    R.zoom = settings.zoom; R.bar = settings.bar; R.pos = settings.pos;
     $('#rv-trim').checked = R.trim; $('#rv-hook').checked = R.hook; $('#rv-brand').checked = R.brand; $('#rv-caps').checked = R.caps;
+    $('#rv-zoom').checked = R.zoom; $('#rv-bar').checked = R.bar;
     $('#rv-pos').value = R.pos;
     $('#rv-brand-l').textContent = settings.handle ? settings.handle : 'הוסיפו שם בהגדרות שבמסך הבית';
     const ey = $('#rv-eye'); ey.hidden = R.eye == null; if (R.eye != null) ey.innerHTML = `<i></i>קשר עין ${R.eye}%`;
@@ -1244,7 +1302,7 @@ const Review = {
       timeClipWords(R.words.filter((w) => w.clip === ci), c.stamps, c.ranges, c.dur);
     }
     buildTimeline();
-    this.styles(); this.swatches(); this.groupsList();
+    this.styles(); this.swatches(); this.looks(); this.groupsList();
     this.busy(false);
     await Player.seek(0);
     Player.play();
@@ -1272,6 +1330,9 @@ const Review = {
       const items = [{ text: 'ככה', active: false }, { text: 'זה', active: true, age: 1 }, { text: 'נראה', active: false, future: true }];
       drawGroup(ctx, 192, 192, items, b.dataset.k, 96, settings.accent, 1, { classic: 0.42, box: 0.42, tall: 0.3, serif: 0.42, sub: 0.5 }[b.dataset.k]);
     });
+  },
+  looks() {
+    $('#looks').innerHTML = Object.entries(LOOKS).map(([k, l]) => `<button class="${k === settings.look ? 'on' : ''}" data-k="${k}">${l.name}</button>`).join('');
   },
   swatches() {
     $('#rv-accent').innerHTML = ACCENTS.map((c) => `<button class="swatch${c === settings.accent ? ' on' : ''}" style="background:${c}" data-c="${c}" aria-label="צבע"></button>`).join('');
@@ -1332,6 +1393,9 @@ $('#rv-trim').addEventListener('change', async (e) => { const G = Player.G(); R.
 $('#rv-hook').addEventListener('change', (e) => { R.hook = e.target.checked; $('#rv-hook-text').hidden = !R.hook; Player.pause(); Player.seek(0.5); });
 $('#rv-hook-text').addEventListener('input', (e) => { R.hookText = e.target.value; if (!Player.playing) Player.seek(0.5); });
 $('#rv-brand').addEventListener('change', (e) => { R.brand = e.target.checked; render(Player.G()); });
+$('#rv-zoom').addEventListener('change', (e) => { R.zoom = settings.zoom = e.target.checked; saveSettings(); render(Player.G()); });
+$('#rv-bar').addEventListener('change', (e) => { R.bar = settings.bar = e.target.checked; saveSettings(); render(Player.G()); });
+$('#looks').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; settings.look = b.dataset.k; saveSettings(); haptic(); Review.looks(); if (!Player.playing) render(Player.G()); });
 $('#rv-caps').addEventListener('change', (e) => { R.caps = e.target.checked; render(Player.G()); });
 $('#groups').addEventListener('change', (e) => { const li = e.target.closest('.group'); if (li && e.target.tagName === 'INPUT') Review.editGroup(+li.dataset.i, e.target.value); });
 $('#groups').addEventListener('click', (e) => {
@@ -1421,7 +1485,11 @@ const Exporter = {
     Wake.on();
     const done = new Promise((res) => { rec.onstop = res; });
     pl.hooks = { pause: () => { try { rec.state === 'recording' && rec.pause(); } catch (_) {} }, resume: () => { try { rec.state === 'paused' && rec.resume(); } catch (_) {} } };
-    pl.onFrame = () => { pctx.drawImage(cv, 0, 0, prev.width, prev.height); this.progress(clamp(pl.G() / R.total, 0, 1)); };
+    let poster = null;
+    pl.onFrame = () => {
+      pctx.drawImage(cv, 0, 0, prev.width, prev.height); this.progress(clamp(pl.G() / R.total, 0, 1));
+      if (!poster && pl.G() >= Math.min(1.2, R.total * 0.3)) { const pc = document.createElement('canvas'); pc.width = 216; pc.height = 384; pc.getContext('2d').drawImage(cv, 0, 0, 216, 384); try { poster = pc.toDataURL('image/jpeg', 0.75); } catch (_) {} }
+    };
     pl.onEnd = () => { setTimeout(() => { try { rec.state !== 'inactive' && rec.stop(); } catch (_) {} }, 250); };
     rec.start(500);
     await pl.play();
@@ -1434,7 +1502,15 @@ const Exporter = {
     if (this.url) URL.revokeObjectURL(this.url);
     this.url = URL.createObjectURL(this.blob);
     this.ext = type.includes('mp4') ? 'mp4' : 'webm';
+    this.savedId = uid();
+    DB.put({ id: this.savedId, created: Date.now(), blob: this.blob, ext: this.ext, dur: R.total, poster }, 'videos').then((r) => { if (r === undefined) {} });
     this.progress(1); this.ui('done'); haptic(20);
+  },
+  openSaved(v) {
+    this.blob = v.blob; this.ext = v.ext || 'mp4'; this.savedId = v.id; this.rec = null;
+    if (this.url) URL.revokeObjectURL(this.url);
+    this.url = URL.createObjectURL(v.blob);
+    this.ui('done');
   },
   progress(p) { $('#ex-pct').textContent = Math.round(p * 100) + '%'; $('#ex-arc').style.strokeDashoffset = 276.5 * (1 - p); },
   ui(state) {
@@ -1446,6 +1522,7 @@ const Exporter = {
     $('#ex-h').textContent = done ? 'הסרטון מוכן' : 'מייצא';
     $('#ex-sub').textContent = done ? (this.ext === 'mp4' ? 'MP4 אנכי, מוכן לטיקטוק, לרילס ולשורטס.' : 'הקובץ בפורמט WebM. לייצוא MP4 השתמשו ב־Chrome מעודכן.') : 'הסרטון נצרב עם הכתוביות. השאירו את המסך פתוח.';
     $('#ex-close').textContent = done ? 'סגירה' : 'ביטול';
+    $('#ex-delete').hidden = !done || !this.savedId;
     if (done) {
       const v = $('#ex-result'); v.src = this.url; v.play().catch(() => {});
       const name = `mabat-${new Date().toISOString().slice(0, 10)}.${this.ext}`;
@@ -1458,11 +1535,15 @@ const Exporter = {
   },
   cancel() {
     if (this.rec && this.rec.state !== 'inactive') { this.cancelled = true; this.pl.pause(); try { this.rec.stop(); } catch (_) {} }
-    else { $('#ex-result').pause(); this.ui('close'); if (current === 'review') Player.play(); }
+    else { $('#ex-result').pause(); this.ui('close'); if (current === 'review') Player.play(); if (current === 'home') Home.render(); }
   },
 };
 $('#rv-export').addEventListener('click', () => { Exporter.prime(); Exporter.run(); });
 $('#ex-close').addEventListener('click', () => Exporter.cancel());
+$('#ex-delete').addEventListener('click', (e) => armConfirm(e.currentTarget, 'הקשה נוספת מוחקת', async () => {
+  await DB.del(Exporter.savedId, 'videos'); Exporter.savedId = null; $('#ex-result').pause(); Exporter.ui('close'); toast('הסרטון נמחק מהגלריה');
+  if (current === 'home') Home.render();
+}));
 
 /* =========================================================
    ייבוא סרטון קיים

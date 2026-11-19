@@ -67,7 +67,17 @@ svg .fill{fill:currentColor;stroke:none}
 
 /* ---------- בית ---------- */
 .tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.tile{display:grid;align-content:start;justify-items:start;gap:2px;padding:16px;border-radius:20px;background:var(--bg2);text-align:right;min-height:132px;transition:transform .25s var(--ease)}
+.tile{display:grid;align-content:start;justify-items:start;gap:2px;padding:16px;border-radius:22px;background:var(--bg2);text-align:right;min-height:140px;transition:transform .25s var(--ease);position:relative;overflow:hidden}
+.tile::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.9}
+#btn-new::before{background:radial-gradient(120% 90% at 100% 0%,rgba(255,69,58,.26),transparent 60%)}
+#btn-import::before{background:radial-gradient(120% 90% at 100% 0%,rgba(255,214,10,.2),transparent 60%)}
+.tile > *{position:relative}
+.vids{display:grid;grid-auto-flow:column;grid-auto-columns:104px;gap:10px;overflow-x:auto;padding:2px 2px 6px;scrollbar-width:none;margin:0 -20px;padding-inline:20px}
+.vids::-webkit-scrollbar{display:none}
+.vid{position:relative;aspect-ratio:9/16;border-radius:14px;overflow:hidden;background:var(--bg2);transition:transform .25s var(--ease)}
+.vid:active{transform:scale(.96)}
+.vid img{width:100%;height:100%;object-fit:cover;display:block}
+.vid span{position:absolute;bottom:6px;left:6px;font-size:12px;font-weight:600;padding:2px 7px;border-radius:7px;background:rgba(0,0,0,.55);font-variant-numeric:tabular-nums}
 .tile:active{transform:scale(.97)}
 .tile .glyph{margin-bottom:22px}
 .tile b{font-size:19px;font-weight:700}
@@ -119,15 +129,15 @@ svg .fill{fill:currentColor;stroke:none}
 .seg.armed{background:var(--red)}
 .seg-live{height:100%;background:var(--red);flex:none;width:0}
 
-.top-row{position:absolute;top:calc(var(--sat) + 20px);left:max(12px,var(--sal));right:max(12px,var(--sar));display:flex;justify-content:space-between;align-items:center;z-index:6;transition:opacity .3s}
+.top-row{position:absolute;top:calc(var(--sat) + 14px);left:max(12px,var(--sal));right:max(12px,var(--sar));display:flex;justify-content:space-between;align-items:center;z-index:6;transition:opacity .3s}
 .glass-btn{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:#fff;background:var(--mat);-webkit-backdrop-filter:blur(20px) saturate(1.6);backdrop-filter:blur(20px) saturate(1.6);transition:opacity .3s,transform .2s var(--ease)}
 .glass-btn:active{transform:scale(.92)}
 .glass-btn svg{width:20px;height:20px}
-.time-pill{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;padding:5px 11px;border-radius:8px;color:#fff;direction:ltr;transition:background .3s}
+.time-pill{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--sab) + 152px);z-index:6;background:rgba(0,0,0,.35);font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;padding:5px 11px;border-radius:8px;color:#fff;direction:ltr;transition:background .3s}
 .shoot.rec .time-pill{background:var(--red)}
 
 /* פרומפטר: חלון זכוכית מתחת לעדשה */
-.prompter{position:absolute;top:calc(var(--sat) + 64px);left:50%;transform:translateX(-50%);width:min(72vw,360px);z-index:5;
+.prompter{position:absolute;top:calc(var(--sat) + 12px);left:50%;transform:translateX(-50%);width:min(64vw,340px);z-index:5;
   border-radius:20px;background:rgba(0,0,0,.42);-webkit-backdrop-filter:blur(22px) saturate(1.4);backdrop-filter:blur(22px) saturate(1.4);
   padding:6px 14px 8px;touch-action:none;transition:background .3s}
 .shoot.rec .prompter{background:rgba(0,0,0,.3)}
@@ -136,6 +146,15 @@ svg .fill{fill:currentColor;stroke:none}
 .ptrack.drag{transition:none}
 .pl{height:var(--plh,34px);line-height:var(--plh,34px);white-space:nowrap;text-align:center;font-size:var(--pfs,22px);font-weight:600;color:rgba(255,255,255,.5);letter-spacing:-.01em}
 .pl.cur{color:rgba(255,255,255,.62)}
+/* מצב מיקוד: שורה אחת, קבועה מתחת לעדשה. העיניים לא זזות */
+.prompter.focus .pwin{height:calc(var(--plh,34px) * 2);-webkit-mask-image:linear-gradient(#000 52%,rgba(0,0,0,.3));mask-image:linear-gradient(#000 52%,rgba(0,0,0,.3))}
+.prompter.focus .pl:not(.cur){opacity:.55}
+.prompter.focus .ptrack{transition:transform .22s var(--ease)}
+.ringlight{position:absolute;inset:0;z-index:4;pointer-events:none;box-shadow:inset 0 0 0 22px rgba(255,250,240,.97),inset 0 0 90px 46px rgba(255,248,235,.55);animation:fade .3s}
+.looks{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none}
+.looks::-webkit-scrollbar{display:none}
+.looks button{height:32px;padding:0 13px;border-radius:16px;background:rgba(255,255,255,.1);font-size:14px;font-weight:600;white-space:nowrap;color:var(--label)}
+.looks button.on{background:#fff;color:#000}
 .pw{position:relative;transition:color .12s,opacity .12s}
 .pw.now::before{content:"";position:absolute;right:0;bottom:3px;height:2.5px;border-radius:2px;background:var(--accent,var(--tint));width:calc(var(--pg,0) * 100%);transition:width .08s linear}
 .pw.said{color:rgba(255,255,255,.28)}
@@ -296,7 +315,7 @@ input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;border-radiu
 .ts-hit{width:100%;height:min(32vh,240px);border-radius:28px;background:var(--tint);color:#000;font-size:20px;font-weight:700;transition:transform .1s}
 .ts-hit:active{transform:scale(.97)}
 
-.toast{position:fixed;left:50%;top:calc(var(--sat) + 70px);transform:translateX(-50%);z-index:50;width:max-content;max-width:calc(100vw - 40px);background:var(--mat-strong);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);color:#fff;padding:12px 18px;border-radius:16px;font-size:15px;font-weight:600;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.35);animation:drop .4s var(--ease)}
+.toast{position:fixed;left:50%;top:calc(var(--sat) + 132px);transform:translateX(-50%);z-index:50;width:max-content;max-width:calc(100vw - 40px);background:var(--mat-strong);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);color:#fff;padding:12px 18px;border-radius:16px;font-size:15px;font-weight:600;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.35);animation:drop .4s var(--ease)}
 @keyframes drop{from{transform:translate(-50%,-16px);opacity:0}}
 
 @media (min-width:700px){
