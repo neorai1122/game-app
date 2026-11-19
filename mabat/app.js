@@ -277,15 +277,18 @@ const Pacer = {
     try {
       this.ac = newAC();
       this.src = this.ac.createMediaStreamSource(stream);
-      this.an = this.ac.createAnalyser(); this.an.fftSize = 512; this.an.smoothingTimeConstant = 0;
+      this.an = this.ac.createAnalyser(); this.an.fftSize = 1024; this.an.smoothingTimeConstant = 0;
       this.src.connect(this.an);
       this.buf = new Float32Array(this.an.fftSize);
+      this.fbuf = new Float32Array(this.an.frequencyBinCount);
+      const hz = this.ac.sampleRate / this.an.fftSize;
+      this.lo = Math.max(1, Math.round(150 / hz)); this.hi = Math.min(this.fbuf.length - 1, Math.round(4000 / hz));
     } catch (e) { console.warn(e); return false; }
     this.reset(); this.wake();
     return true;
   },
   wake() { try { if (this.ac && this.ac.state !== 'running') this.ac.resume().catch(() => {}); } catch (_) {} },
-  reset() { this.hist = new Float32Array(180); this.hi = 0; this.n = 0; this.floor = -60; this.level = 0; this.voiced = false; this.hang = 0; },
+  reset() { this.hist = new Float32Array(180); this.hix = 0; this.n = 0; this.floor = -60; this.level = 0; this.voiced = false; this.hang = 0; this.env = new Float32Array(24).fill(-90); this.ei = 0; this.flat = 0.6; this.per = 0; this.ph = new Float32Array(24); this.pi = 0; },
   detach() {
     try { this.src && this.src.disconnect(); } catch (_) {}
     try { this.ac && this.ac.close(); } catch (_) {}
@@ -299,12 +302,40 @@ const Pacer = {
     const db = 10 * Math.log10(s / b.length + 1e-10);
     if (this.n === 0) this.hist.fill(db);
     // רצפת הרעש היא אחוזון נמוך של שלוש השניות האחרונות, כך שדיבור ארוך לא מרים אותה
-    this.hist[(this.hi = (this.hi + 1) % this.hist.length)] = db; this.n++;
+    this.hist[(this.hix = (this.hix + 1) % this.hist.length)] = db; this.n++;
     if (this.n % 6 === 1) { const a = Array.from(this.hist).sort((x, y) => x - y); this.floor = clamp(a[Math.floor(a.length * 0.12)], -90, -35); }
     const above = db - this.floor;
     this.level += (clamp(above / 28, 0, 1) - this.level) * 0.5;
-    if (above > 9) { this.voiced = true; this.hang = 0.18; }
-    else if (above < 6) { this.hang -= dt; if (this.hang <= 0) this.voiced = false; }
+    // דיבור הוא צליל עם מבנה הרמוני (שטוחות נמוכה) ועם עליות וירידות של הברות.
+    // רעש של מזגן, מאוורר או חדר הוא שטוח ויציב, ולכן לא מזיז את הטקסט
+    this.an.getFloatFrequencyData(this.fbuf);
+    let ar = 0, lg = 0, n = 0;
+    for (let i = this.lo; i <= this.hi; i++) { const p = Math.pow(10, this.fbuf[i] / 10) + 1e-12; ar += p; lg += Math.log(p); n++; }
+    const flat = n ? Math.exp(lg / n) / (ar / n) : 1;
+    this.flat += (flat - this.flat) * 0.45;
+    this.env[(this.ei = (this.ei + 1) % this.env.length)] = db;
+    let mx = -200, mn = 200; for (let i = 0; i < this.env.length; i++) { const x = this.env[i]; if (x > mx) mx = x; if (x < mn) mn = x; }
+    const mod = mx - mn;
+    // מחזוריות: קול אנושי נוצר ממיתרי הקול ולכן יש לו גובה צליל (75-400 הרץ) שזז כל הזמן.
+    // לרעש אין גובה צליל, ולזמזום חשמלי יש גובה קבוע לגמרי
+    let best = 0, bestL = 0;
+    if (above > 6) {
+      const x = this.buf, M = x.length >> 1; const d = this.dbuf || (this.dbuf = new Float32Array(M));
+      for (let i = 0; i < M; i++) d[i] = (x[2 * i] + x[2 * i + 1]) * 0.5;
+      const sr2 = this.ac.sampleRate / 2; const minL = Math.floor(sr2 / 400), maxL = Math.min(M - 40, Math.ceil(sr2 / 75));
+      for (let L = minL; L <= maxL; L++) {
+        let s2 = 0, e1 = 0, e2 = 0;
+        for (let i = 0; i + L < M; i++) { const a = d[i], c = d[i + L]; s2 += a * c; e1 += a * a; e2 += c * c; }
+        const r = s2 / Math.sqrt(e1 * e2 + 1e-12); if (r > best) { best = r; bestL = L; }
+      }
+      if (bestL) { this.ph[(this.pi = (this.pi + 1) % this.ph.length)] = sr2 / bestL; }
+    }
+    this.per += (best - this.per) * 0.5;
+    let pm = 0; for (let i = 0; i < this.ph.length; i++) pm += this.ph[i]; pm /= this.ph.length;
+    let pv = 0; for (let i = 0; i < this.ph.length; i++) pv += (this.ph[i] - pm) ** 2; const pstd = pm ? Math.sqrt(pv / this.ph.length) / pm : 1;
+    const hum = pstd < 0.02;
+    if (above > 9 && this.per > 0.55 && this.flat < 0.5 && !hum && (mod > 4.5 || this.voiced)) { this.voiced = true; this.hang = 0.18; }
+    else if (above < 6 || this.per < 0.35 || hum) { this.hang -= dt; if (this.hang <= 0) this.voiced = false; }
     return { voiced: this.voiced, level: this.level };
   },
 };
@@ -397,7 +428,7 @@ const Shoot = {
     $('#ptrack').innerHTML = lines.map((l) => '<div class="pl">' + l.map((i) => {
       const w = this.W[i];
       return `<span class="pw${w.emph ? ' emph' : ''}${w.brk ? ' brk' : ''}" data-i="${i}">${esc(w.text)}</span>`;
-    }).join(' ') + '</div>').join('') + '<div class="pl"></div><div class="pl"></div>';
+    }).join(' ') + '</div>').join('') + '<div class="pl endl">סוף הטקסט</div><div class="pl"></div>';
     this.spans = $$('#ptrack .pw'); this.lineEls = $$('#ptrack .pl');
     this.lh = lh; this.painted = -1; this.paint();
     this.sizeCap();
@@ -423,7 +454,7 @@ const Shoot = {
       this.minP = Math.min(this.minP, this.p);
       if (fromUser && this.p < prev) for (let i = this.p; i < prev; i++) delete this.stamps[i];
     }
-    if (fromUser) { this.f.prog = 0; this.f.gate = false; this.f.over = 0; this.newPhrase(); }
+    if (fromUser) { this.f.prog = 0; this.f.gate = false; this.f.over = 0; this.f.adv = 0; this.f.totalVT = 0; this.newPhrase(); }
     this.lastAdvance = performance.now();
     this.paint();
   },
@@ -443,17 +474,19 @@ const Shoot = {
       return;
     }
     if (settings.mode !== 'voice' || !a) return;
-    const rate = f.rate * settings.pace;
+    const rate = f.rate * settings.pace * 0.95;
+    // תקרה קשיחה: הטקסט לא יכול להתקדם מהר יותר ממה שבן אדם מסוגל לדבר בזמן שדיברתם בפועל
+    const cap = f.totalVT * 7.5 + 2;
     if (a.voiced) {
-      f.sil = 0; f.snapped = false; f.phraseVT += dt;
+      f.sil = 0; f.snapped = false; f.phraseVT += dt; f.totalVT += dt;
       const inc = dt * rate;
       if (f.gate) {
         // הטקסט הגיע לסוף המשפט לפניכם: מחכים לנשימה. אם ממשיכים לדבר בלי עצירה, משחררים
         f.over += dt;
-        if (f.over >= clamp(0.5 * f.gateVT, 0.9, 3.2)) { f.gate = false; f.prog = Math.min(3, f.over * rate * 0.5); f.over = 0; this.newPhrase(); this.stampCurrent(f.prog / rate); }
+        if (f.over >= Math.max(1.6, 0.6 * f.gateVT)) { f.gate = false; f.prog = Math.min(3, f.over * rate * 0.5); f.over = 0; this.newPhrase(); this.stampCurrent(f.prog / rate); }
       } else { this.stampCurrent(); f.prog += inc; }
-      while (!f.gate && this.p < W.length && f.prog >= sylOf(W[this.p])) {
-        f.prog -= sylOf(W[this.p]); const w = W[this.p];
+      while (!f.gate && this.p < W.length && f.prog >= sylOf(W[this.p]) && f.adv + sylOf(W[this.p]) <= cap) {
+        f.prog -= sylOf(W[this.p]); f.adv += sylOf(W[this.p]); const w = W[this.p];
         this.setPointer(this.p + 1);
         if (isPhraseEnd(w)) { f.gate = true; f.over = 0; f.gateVT = f.phraseVT; f.prog = 0; }
         else this.stampCurrent(f.prog / rate);
@@ -465,9 +498,10 @@ const Shoot = {
         f.snapped = true;
         let k = this.p, rem = -f.prog; for (; k < W.length; k++) { rem += sylOf(W[k]); if (isPhraseEnd(W[k])) break; }
         const ratio = f.phraseVT > 0.3 ? f.phraseSyl / f.phraseVT / f.rate : 99;
-        const [lo, hi] = f.cal < 2 ? [0.55, 2.0] : [0.72, 1.45];
-        // עצרתם, ולפי הזמן שדיברתם סביר שסיימתם את המשפט: הטקסט מדלג לסופו ולומד את הקצב שלכם
-        if (k < W.length && ((rem <= 2.5 && ratio < 2.2) || (ratio >= lo && ratio <= hi && rem <= f.phraseSyl * 0.7))) {
+        const [lo, hi] = f.cal < 2 ? [0.65, 1.6] : [0.75, 1.35];
+        // עצרתם, ולפי הזמן שדיברתם סביר שסיימתם את המשפט: הטקסט משלים את המילים האחרונות ולומד את הקצב שלכם
+        if (k < W.length && f.adv + rem <= cap + 2 && ((rem <= 2 && ratio < 2) || (ratio >= lo && ratio <= hi && rem <= f.phraseSyl * 0.45))) {
+          f.adv += Math.max(0, rem);
           const t = this.recording ? this.segTime() - f.sil : 0;
           for (let i = this.p; i <= k; i++) if (this.recording && this.stamps[i] == null) this.stamps[i] = Math.max(0, t - 0.14 * (k - i + 1));
           if (ratio >= lo && ratio <= hi) this.learn();
@@ -531,7 +565,8 @@ const Shoot = {
     const from = this.p; const t = this.recording ? this.segTime() : 0;
     let crossed = false;
     for (let i = from; i < np; i++) { if (isPhraseEnd(this.W[i])) crossed = true; if (this.recording && this.stamps[i] == null) this.stamps[i] = Math.max(0, t - 0.28 * (np - i)); }
-    this.f.rate = clamp(this.f.rate * 1.04, 3.5, 8.5);
+    this.f.rate = clamp(this.f.rate * 1.04, 3.5, 8.5); this.asrUsed = true;
+    for (let i = from; i < np; i++) this.f.adv += sylOf(this.W[i]);
     this.setPointer(np); this.f.prog = 0; this.f.gate = false; this.f.over = 0;
     if (crossed) this.newPhrase();
   },
@@ -578,7 +613,7 @@ const Shoot = {
     el.hidden = true; const ok = this.counting; this.counting = false; return ok;
   },
   startRun() {
-    this.f = { prog: 0, gate: false, over: 0, sil: 0, snapped: false, autoAcc: 0, rate: settings.rate || 5.0, phraseVT: 0, phraseSyl: 1, cal: 0 };
+    this.f = { prog: 0, gate: false, over: 0, sil: 0, snapped: false, autoAcc: 0, rate: settings.rate || 5.0, phraseVT: 0, phraseSyl: 1, cal: 0, totalVT: 0, adv: 0 };
     this.newPhrase();
     this.runStart = performance.now(); this.runW0 = this.p;
     Pacer.wake();
@@ -596,7 +631,7 @@ const Shoot = {
     this.segStart = performance.now();
     this.rec.onstart = () => { this.segStart = performance.now(); };
     this.rec.start(250);
-    this.recording = true; this.stamps = {}; this.minP = this.p; this.segW0 = this.p;
+    this.recording = true; this.stamps = {}; this.minP = this.p; this.segW0 = this.p; this.asrUsed = false;
     this.eyeAcc = { sum: 0, n: 0 };
     this.disarm(); $('#sh-del').disabled = true; $('#sh-done').disabled = true;
     this.startRun();
@@ -607,7 +642,13 @@ const Shoot = {
     const dur = this.segTime();
     this.recording = false; this.stopASR();
     $('#s-shoot').classList.remove('rec'); haptic(10);
-    const rec = this.rec; const w0 = Math.min(this.minP, this.segW0), w1 = this.p, eye = this.eyeAcc, stamps = this.stamps, mirror = this.facing === 'user';
+    const rec = this.rec; const w0 = Math.min(this.minP, this.segW0), eye = this.eyeAcc, stamps = this.stamps, mirror = this.facing === 'user';
+    let w1 = this.p;
+    if (settings.mode === 'voice' && !this.asrUsed && this.minP >= this.segW0) {
+      const budget = this.f.totalVT * this.f.rate * 1.25 + 1.5;
+      let k = w0, s = 0; while (k < w1 && s + sylOf(this.W[k]) <= budget) { s += sylOf(this.W[k]); k++; }
+      if (w1 - k >= 2) { w1 = k; for (const key of Object.keys(stamps)) if (+key >= k) delete stamps[key]; this.setPointer(w1); toast('הטקסט תוקן למקום שבו עצרתם'); }
+    }
     const saved = new Promise((resolve) => {
       rec.onstop = async () => {
         const blob = new Blob(this.chunks, { type: this.mime });
@@ -686,14 +727,14 @@ const Shoot = {
       const v = $('#cam');
       if (settings.eye && Eye.lm && nowMs - lastEye > 140) {
         lastEye = nowMs; Eye.sample(v);
-        const chip = $('#eye-chip'); chip.hidden = false;
-        if (Eye.score == null) { chip.querySelector('b').textContent = 'מחפש פנים'; chip.className = 'chip mid'; }
+        const ev = $('#eye-val'); ev.hidden = false;
+        if (Eye.score == null) { ev.textContent = 'מחפש פנים'; ev.className = 'mid'; }
         else {
-          chip.querySelector('b').textContent = 'קשר עין ' + Eye.score + '%';
-          chip.className = 'chip' + (Eye.score < 60 ? ' bad' : Eye.score < 80 ? ' mid' : '');
+          ev.textContent = 'מבט ' + Eye.score + '%';
+          ev.className = Eye.score < 60 ? 'bad' : Eye.score < 80 ? 'mid' : '';
           if (this.recording) { this.eyeAcc.sum += Eye.score; this.eyeAcc.n++; }
         }
-      } else if (!settings.eye) $('#eye-chip').hidden = true;
+      } else if (!settings.eye) $('#eye-val').hidden = true;
       if (!this.running && nowMs - lastLight > 800 && v.readyState >= 2 && this.stream) {
         lastLight = nowMs;
         try {
@@ -719,11 +760,11 @@ const Shoot = {
     $('#s-shoot').classList.toggle('rehearse', m === 'rehearse');
   },
   applyRail() {
-    $('#sh-mode-l').textContent = MODE_L[settings.mode];
-    $('#sh-size-l').textContent = settings.fontSize;
+    $$('#pop-mode button').forEach((b) => b.classList.toggle('on', b.dataset.v === settings.mode));
+    $$('#pop-size button').forEach((b) => b.classList.toggle('on', +b.dataset.v === settings.fontSize));
+    $$('#pop-eye button').forEach((b) => b.classList.toggle('on', +b.dataset.v === (settings.eye ? 1 : 0)));
     $('#sh-timer-l').textContent = settings.timer ? settings.timer + ' שנ׳' : 'כבוי';
     $('#sh-len-l').textContent = settings.maxDur >= 60 ? settings.maxDur / 60 + ' דק׳' : settings.maxDur + ' שנ׳';
-    $('#sh-eye').classList.toggle('on', settings.eye);
     $('#sh-view-l').textContent = settings.view === 'focus' ? 'מיקוד' : 'שורות';
     $('#sh-light').classList.toggle('on', settings.light);
     $('#ringlight').hidden = !settings.light;
@@ -767,16 +808,16 @@ $('#s-shoot').addEventListener('pointerdown', () => Pacer.wake());
 $('#sh-close').addEventListener('click', () => { const n = Shoot.segs.length; history.state ? history.back() : goHome(); if (n) toast('הטיוטה נשמרה'); });
 $('#sh-flip').addEventListener('click', () => { if (Shoot.running) return; Shoot.facing = Shoot.facing === 'user' ? 'environment' : 'user'; Shoot.startCam(); haptic(); });
 $('#modes').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { Shoot.setMode(b.dataset.m); haptic(); toast(b.dataset.m === 'rehearse' ? 'חזרה: הטקסט רץ בלי הקלטה' : 'צילום'); } });
-$('#sh-mode').addEventListener('click', () => {
-  const o = ['voice', 'auto', 'manual']; settings.mode = o[(o.indexOf(settings.mode) + 1) % 3];
-  Shoot.applyRail(); toast(MODE_T[settings.mode]); haptic();
-});
-$('#sh-size').addEventListener('click', () => { const o = [18, 22, 26, 30]; settings.fontSize = o[(o.indexOf(settings.fontSize) + 1) % o.length]; Shoot.applyRail(); Shoot.layout(); haptic(); });
+$('#sh-more').addEventListener('click', (e) => { e.stopPropagation(); $('#pop').hidden = !$('#pop').hidden; $('#sh-more').classList.toggle('on', !$('#pop').hidden); haptic(); });
+$('#s-shoot').addEventListener('click', (e) => { if (!$('#pop').hidden && !e.target.closest('#pop') && !e.target.closest('#sh-more')) { $('#pop').hidden = true; $('#sh-more').classList.remove('on'); } });
+$('#pop-mode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; settings.mode = b.dataset.v; Shoot.applyRail(); toast(MODE_T[settings.mode]); haptic(); });
+$('#pop-size').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; settings.fontSize = +b.dataset.v; Shoot.applyRail(); Shoot.layout(); haptic(); });
+$('#pop-eye').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; settings.eye = b.dataset.v === '1'; Shoot.applyRail(); if (settings.eye) Eye.load(); haptic(); });
 $('#sh-timer').addEventListener('click', () => { const o = [0, 3, 10]; settings.timer = o[(o.indexOf(settings.timer) + 1) % o.length]; Shoot.applyRail(); haptic(); });
 $('#sh-len').addEventListener('click', () => { const o = [15, 60, 180]; settings.maxDur = o[(o.indexOf(settings.maxDur) + 1) % o.length]; Shoot.applyRail(); Shoot.renderSegs(); haptic(); });
 $('#sh-view').addEventListener('click', () => { settings.view = settings.view === 'focus' ? 'lines' : 'focus'; Shoot.applyRail(); Shoot.layout(); haptic(); toast(settings.view === 'focus' ? 'מיקוד: הטקסט בנקודה אחת מתחת לעדשה' : 'שורות: שלוש שורות גוללות'); });
 $('#sh-light').addEventListener('click', () => { settings.light = !settings.light; Shoot.applyRail(); haptic(); if (settings.light) toast('תאורה: הגבירו את בהירות המסך'); });
-$('#sh-eye').addEventListener('click', () => { settings.eye = !settings.eye; Shoot.applyRail(); if (settings.eye) Eye.load(); haptic(); });
+
 
 /* גרירת הפרומפטר למעלה ולמטה, והקשה על מילה כדי לקפוץ אליה */
 (() => {
@@ -1153,23 +1194,69 @@ function toLocal(G) {
   for (const s of R.tl) if (G < s.g + (s.b - s.a)) return { clip: s.clip, t: s.a + Math.max(0, G - s.g) };
   const s = R.tl[R.tl.length - 1]; return { clip: s.clip, t: s.b };
 }
+/* מילים שפותחות חלק חדש במשפט. כתובית חדשה מתחילה בהן כשאפשר */
+const BREAK = new Set(['כי', 'אבל', 'אז', 'ואז', 'אם', 'כאשר', 'למרות', 'בגלל', 'או', 'גם', 'וגם', 'רק', 'עד', 'אלא', 'לכן', 'ולכן', 'כמו', 'בלי', 'כדי', 'שאם', 'וכש', 'ואם', 'אבל', 'כשאני', 'כשאתה', 'כשהיא', 'כשהוא'].map(normWord));
+function splitPhrase(i, j, st) {
+  const Wd = R.words; const n = j - i;
+  const chars = (a, b) => Wd.slice(a, b).reduce((s, w) => s + w.text.length + 1, -1);
+  for (let k = Math.ceil(n / st.max); k <= n; k++) {
+    const b = [i]; for (let q = 1; q < k; q++) b.push(i + Math.round((q * n) / k)); b.push(j);
+    for (let q = 1; q < k; q++) {
+      if (BREAK.has(Wd[b[q]].norm)) continue;
+      for (const d of [-1, 1]) {
+        const x = b[q] + d;
+        const minA = n >= 4 ? 2 : 1;
+        if (x - b[q - 1] >= minA && b[q + 1] - x >= minA && x - b[q - 1] <= st.max && b[q + 1] - x <= st.max && BREAK.has(Wd[x].norm)) { b[q] = x; break; }
+      }
+    }
+    let ok = true; for (let q = 1; q < b.length; q++) if (b[q] - b[q - 1] > 1 && chars(b[q - 1], b[q]) > st.chars) ok = false;
+    if (ok) return b.slice(0, -1).map((x, q) => ({ i0: x, i1: b[q + 1] }));
+  }
+  return [{ i0: i, i1: j }];
+}
 function computeGroups() {
-  const st = STYLES[settings.style]; const out = []; let cur = null;
-  R.words.forEach((w, i) => {
-    const prev = R.words[i - 1];
-    const brk = !cur || cur.n >= st.max || cur.chars + w.text.length > st.chars ||
-      (prev && isPhraseEnd(prev)) || (prev && /[,:;]$/.test(prev.text) && cur.n >= 2) ||
-      (prev && prev.clip !== w.clip) || (prev && w.g - prev.g > 1.0);
-    if (brk) { cur = { i0: i, i1: i + 1, n: 1, chars: w.text.length, start: w.g }; out.push(cur); }
-    else { cur.i1 = i + 1; cur.n++; cur.chars += w.text.length + 1; }
-  });
+  const st = STYLES[settings.style]; const Wd = R.words; const out = [];
+  let i = 0;
+  while (i < Wd.length) {
+    let j = i + 1;
+    while (j < Wd.length && !isPhraseEnd(Wd[j - 1]) && !/[,:;]$/.test(Wd[j - 1].text) && Wd[j].clip === Wd[j - 1].clip && Wd[j].g - Wd[j - 1].g < 0.9) j++;
+    out.push(...splitPhrase(i, j, st));
+    i = j;
+  }
+  out.forEach((gr) => (gr.start = Wd[gr.i0].g));
   out.forEach((gr, j) => {
-    const last = R.words[gr.i1 - 1]; const next = out[j + 1];
-    const est = last.g + Math.max(0.4, sylOf(last) * 0.22) + 0.45;
-    gr.end = next ? Math.min(next.start, est) : Math.min(R.total, est + 0.4);
+    const last = Wd[gr.i1 - 1]; const next = out[j + 1];
+    const est = last.g + Math.max(0.4, sylOf(last) * 0.2) + 0.5;
+    // אם הכתובית הבאה מגיעה מהר, הנוכחית נשארת עד אליה ולא מהבהבת
+    gr.end = next ? (next.start - est < 0.7 ? next.start : est) : Math.min(R.total, est + 0.4);
     if (gr.end <= gr.start) gr.end = gr.start + 0.3;
   });
   R.groups = out;
+}
+/* קובע אילו מילים נאמרו בכל קטע לפי משך הדיבור בהקלטה עצמה */
+function assignWords() {
+  const W = R.script; const rate = settings.rate || 5; R.words = [];
+  const span = (a, b) => { let s = 0; for (let i = a; i < b; i++) s += sylOf(W[i]); return s; };
+  let next = R.clips.length ? R.clips[0].w0 || 0 : 0;
+  R.clips.forEach((c, ci) => {
+    const voiced = c.ranges.length ? c.ranges.reduce((a, r) => a + (r[1] - r[0]), 0) : c.dur * 0.8;
+    const cap = voiced * rate;
+    let a = c.w0, b = c.w1;
+    const live = b > a ? span(a, b) : 0;
+    c.trusted = b > a && a === next && live >= cap * 0.6 && live <= cap * 1.5;
+    if (!c.trusted) {
+      a = next;
+      let s = 0, k = a; while (k < W.length && s + sylOf(W[k]) * 0.5 <= cap) { s += sylOf(W[k]); k++; }
+      let best = k;
+      for (let j = Math.max(a + 1, k - 6); j <= Math.min(W.length, k + 6); j++) {
+        if (isPhraseEnd(W[j - 1]) && Math.abs(span(a, j) - cap) <= cap * 0.3 && (!isPhraseEnd(W[best - 1]) || Math.abs(j - k) < Math.abs(best - k))) best = j;
+      }
+      b = best;
+      if (ci === R.clips.length - 1 && b < W.length && span(b, W.length) <= cap * 0.35) b = W.length;
+    }
+    for (let i = a; i < b; i++) R.words.push({ ...W[i], idx: i, clip: ci, t: 0 });
+    next = b;
+  });
 }
 
 function makePlayer(ui) {
@@ -1258,23 +1345,14 @@ const Review = {
     const segs = await DB.bySid(sid); if (!segs.length) { toast('אין עדיין קטעים מצולמים'); return; }
     const W = parseScript(scriptById(sid).text);
     R.from = 'shoot'; R.sid = sid; R.trim = true; R.hook = true;
-    R.clips = segs.map((s) => ({ blob: s.blob, dur: s.dur, url: URL.createObjectURL(s.blob), mirror: s.mirror !== false, stamps: s.stamps || {} }));
-    const assign = segs.map((s) => [s.w0, s.w1]);
-    const tracked = segs.reduce((a, s) => a + Math.max(0, s.w1 - s.w0), 0);
-    if (!tracked) {
-      const T = segs.reduce((a, s) => a + s.dur, 0); let acc = 0, i0 = 0;
-      segs.forEach((s, i) => { acc += s.dur; const i1 = i === segs.length - 1 ? W.length : Math.round((acc / T) * W.length); assign[i] = [i0, i1]; i0 = i1; });
-    } else {
-      const last = assign[assign.length - 1];
-      if (last[1] < W.length && last[1] >= W.length * 0.8) last[1] = W.length;
-    }
-    R.words = [];
-    assign.forEach(([a, b], ci) => { for (let i = a; i < b; i++) if (W[i]) R.words.push({ ...W[i], idx: i, clip: ci, t: 0 }); });
+    R.clips = segs.map((s) => ({ blob: s.blob, dur: s.dur, url: URL.createObjectURL(s.blob), mirror: s.mirror !== false, stamps: s.stamps || {}, w0: s.w0, w1: s.w1 }));
+    R.script = W; R.words = [];
     const eyes = segs.filter((s) => s.eye != null);
     R.eye = eyes.length ? Math.round(eyes.reduce((a, s) => a + s.eye * s.dur, 0) / eyes.reduce((a, s) => a + s.dur, 0)) : null;
     await this.open();
   },
   async fromImport(file, text, dur) {
+    R.script = null;
     R.from = 'import'; R.sid = null; R.trim = false; R.hook = false; R.eye = null;
     R.clips = [{ blob: file, dur, url: URL.createObjectURL(file), mirror: false, stamps: {} }];
     R.words = parseScript(text).map((w, i) => ({ ...w, idx: i, clip: 0, t: 0 }));
@@ -1291,16 +1369,17 @@ const Review = {
     $('#rv-pos').value = R.pos;
     $('#rv-brand-l').textContent = settings.handle ? settings.handle : 'הוסיפו שם בהגדרות שבמסך הבית';
     const ey = $('#rv-eye'); ey.hidden = R.eye == null; if (R.eye != null) ey.innerHTML = `<i></i>קשר עין ${R.eye}%`;
+    this.busy(true);
+    await Promise.all([document.fonts.ready, ...Object.values(STYLES).map((s) => document.fonts.load(s.font(40), 'אבג'))].map((p) => Promise.resolve(p).catch(() => {})));
+    for (const c of R.clips) {
+      const a = await analyzeAudio(c.blob, c.dur);
+      c.ranges = a.ranges; if (isFinite(a.dur) && a.dur > 0) c.dur = a.dur;
+    }
+    if (R.from === 'shoot' && R.script) assignWords();
+    R.clips.forEach((c, ci) => timeClipWords(R.words.filter((w) => w.clip === ci), c.trusted ? c.stamps : null, c.ranges, c.dur));
     const first = []; for (const w of R.words) { first.push(w.text); if (isPhraseEnd(w) || first.length >= 7) break; }
     R.hookText = first.join(' ').replace(/[,.:;…]$/, '');
     $('#rv-hook-text').value = R.hookText; $('#rv-hook-text').hidden = !R.hook;
-    this.busy(true);
-    await Promise.all([document.fonts.ready, ...Object.values(STYLES).map((s) => document.fonts.load(s.font(40), 'אבג'))].map((p) => Promise.resolve(p).catch(() => {})));
-    for (const [ci, c] of R.clips.entries()) {
-      const a = await analyzeAudio(c.blob, c.dur);
-      c.ranges = a.ranges; if (isFinite(a.dur) && a.dur > 0) c.dur = a.dur;
-      timeClipWords(R.words.filter((w) => w.clip === ci), c.stamps, c.ranges, c.dur);
-    }
     buildTimeline();
     this.styles(); this.swatches(); this.looks(); this.groupsList();
     this.busy(false);
