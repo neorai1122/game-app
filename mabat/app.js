@@ -360,7 +360,6 @@ function pickMime(kind) {
   if (kind === 'export') list.unshift('video/mp4;codecs=avc1.640028,mp4a.40.2');
   return list.find((m) => { try { return MediaRecorder.isTypeSupported(m); } catch (_) { return false; } }) || '';
 }
-const MODE_L = { voice: 'קול', auto: 'קבוע', manual: 'ידני' };
 const MODE_T = { voice: 'הטקסט עוקב אחרי הקול', auto: 'גלילה בקצב קבוע', manual: 'הקישו על הטקסט כדי להתקדם' };
 
 const Shoot = {
@@ -513,7 +512,7 @@ const Shoot = {
         f.prog -= sylOf(W[this.p]); f.adv += sylOf(W[this.p]);
         const w = W[this.p]; const lineEnd = this.lineOf[this.p] !== this.lineOf[this.p + 1];
         this.setPointer(this.p + 1);
-        if (isPhraseEnd(w)) { f.gate = true; f.gateHard = true; f.over = 0; f.gateVT = f.phraseVT; f.prog = 0; }
+        if (isPhraseEnd(w)) { f.gate = true; f.gateHard = true; f.over = 0; f.prog = 0; }
         else if (lineEnd) { f.gate = true; f.gateHard = false; f.over = 0; f.prog = 0; }
         else this.stampCurrent(f.prog / rate);
       }
@@ -590,8 +589,11 @@ const Shoot = {
     r.onresult = (e) => {
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const key = st.off + i; if (st.base[key] == null) st.base[key] = Math.max(0, this.p - 3);
-        const np = this.matchFrom(st.base[key], e.results[i][0].transcript.split(/\s+/));
-        if (np > this.p && np - this.p <= 10) this.asrJump(np);
+        const toks = e.results[i][0].transcript.split(/\s+/).filter(Boolean);
+        const np = this.matchFrom(st.base[key], toks);
+        // קפיצה של יותר משתי מילים דורשת ששתי המילים האחרונות שזוהו יתאימו ברצף, כדי שמילה נפוצה לא תקפיץ קדימה
+        const strong = np - this.p <= 2 || (toks.length >= 2 && this.matchFrom(Math.max(0, np - 4), toks.slice(-2)) === np);
+        if (np > this.p && np - this.p <= 10 && strong) this.asrJump(np);
       }
     };
     r.onerror = (ev) => { if (['not-allowed', 'service-not-allowed', 'language-not-supported', 'audio-capture', 'network'].includes(ev.error)) { st.active = false; this.asrOff = true; } };
@@ -843,7 +845,8 @@ leaveHooks.shoot = () => Shoot.leave();
 
 $('#sh-del').addEventListener('click', () => Shoot.delLast());
 $('#sh-done').addEventListener('click', async () => { await Shoot.stopSeg(); Exporter.prime(); Review.fromShoot(Shoot.sid); });
-$('#s-shoot').addEventListener('pointerdown', () => Pacer.wake());
+// באייפון ערוץ השמע מתעורר רק מהקשה "אמיתית", לכן מעירים אותו בכל סוג של מגע
+['pointerdown', 'touchend', 'click'].forEach((ev) => $('#s-shoot').addEventListener(ev, () => Pacer.wake(), { passive: true }));
 $('#sh-close').addEventListener('click', () => { const n = Shoot.segs.length; history.state ? history.back() : goHome(); if (n) toast('הטיוטה נשמרה'); });
 $('#sh-flip').addEventListener('click', () => { if (Shoot.running) return; Shoot.facing = Shoot.facing === 'user' ? 'environment' : 'user'; Shoot.startCam(); haptic(); });
 $('#modes').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) { Shoot.setMode(b.dataset.m); haptic(); toast(b.dataset.m === 'rehearse' ? 'חזרה: הטקסט רץ בלי הקלטה' : 'צילום'); } });
@@ -1116,13 +1119,21 @@ const R = {
   from: 'shoot', sid: null, clips: [], words: [], tl: [], total: 0, groups: [],
   pos: settings.pos, trim: true, hook: true, hookText: '', brand: true, caps: true, eye: null,
 };
+/* מראות בנויים מפעולות מיזוג של כרטיס המסך, ולא ממסנן CSS שרץ על המעבד ואיטי פי כמה */
 const LOOKS = {
-  natural: { name: 'טבעי', f: 'none' },
-  warm: { name: 'חם', f: 'saturate(1.14) sepia(.13) brightness(1.04) contrast(1.03)' },
-  cine: { name: 'קולנועי', f: 'contrast(1.14) saturate(.86) brightness(.97)', vignette: true },
-  vivid: { name: 'חי', f: 'saturate(1.32) contrast(1.08)' },
-  bw: { name: 'שחור־לבן', f: 'grayscale(1) contrast(1.18)', vignette: true },
+  natural: { name: 'טבעי' },
+  warm: { name: 'חם', ops: [['soft-light', 'rgba(255,160,70,.34)']] },
+  cine: { name: 'קולנועי', ops: [['soft-light', 'rgba(0,80,100,.4)'], ['multiply', 'rgba(255,240,225,.94)']], vignette: true },
+  vivid: { name: 'קר', ops: [['soft-light', 'rgba(70,140,255,.32)']] },
+  bw: { name: 'שחור־לבן', ops: [['saturation', '#808080'], ['soft-light', 'rgba(0,0,0,.2)']], vignette: true },
 };
+/* שכבות מוכנות מראש: מציירים אותן רק כשהתוכן משתנה, ובכל פריים רק מדביקים */
+const layers = new Map();
+function layer(name, W, H) {
+  const k = name + ':' + W + 'x' + H; let c = layers.get(k);
+  if (!c) { c = document.createElement('canvas'); c.width = W; c.height = H; c._key = ''; layers.set(k, c); }
+  return c;
+}
 if (!LOOKS[settings.look]) settings.look = 'natural';
 /* תקריב עדין שמתחלף עם כל שורת כתוביות */
 function zoomAt(G) {
@@ -1168,6 +1179,7 @@ function render(G, target, pl = Player) {
   const cv = target || $('#rv-canvas'); const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
   if (G == null) G = pl.G();
   const v = pl.v;
+  if (!target && pl.ui) return renderPreview(G, cv, ctx, W, H, pl);
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
   if (v && v.readyState >= 2 && v.videoWidth) {
     const sc = Math.max(W / v.videoWidth, H / v.videoHeight);
@@ -1178,28 +1190,25 @@ function render(G, target, pl = Player) {
     const seg = R.tl[pl.k]; const mirror = seg && R.clips[seg.clip] && R.clips[seg.clip].mirror;
     const look = LOOKS[settings.look] || LOOKS.natural;
     ctx.save();
-    if (look.f !== 'none') ctx.filter = look.f;
     if (mirror) { ctx.translate(W, 0); ctx.scale(-1, 1); }
     ctx.drawImage(v, mirror ? W - dx - dw : dx, dy, dw, dh);
     ctx.restore();
+    if (look.ops) {
+      ctx.save();
+      for (const [op, col] of look.ops) { ctx.globalCompositeOperation = op; ctx.fillStyle = col; ctx.fillRect(0, 0, W, H); }
+      ctx.restore();
+    }
     if (look.vignette) {
-      const g = ctx.createRadialGradient(W / 2, H * 0.45, H * 0.25, W / 2, H * 0.45, H * 0.75);
-      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.45)');
-      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      const vg = layer('vignette', W, H);
+      if (!vg._key) {
+        const c = vg.getContext('2d'); const g = c.createRadialGradient(W / 2, H * 0.45, H * 0.25, W / 2, H * 0.45, H * 0.75);
+        g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,.45)'); c.fillStyle = g; c.fillRect(0, 0, W, H); vg._key = 'v';
+      }
+      ctx.drawImage(vg, 0, 0);
     }
   }
   const accent = settings.accent;
-  if (R.caps) {
-    const gi = groupAt(G);
-    if (gi >= 0) {
-      const gr = R.groups[gi]; const items = [];
-      let act = -1; for (let i = gr.i0; i < gr.i1; i++) if (R.words[i].g <= G + 0.02) act = i;
-      for (let i = gr.i0; i < gr.i1; i++) { const w = R.words[i]; items.push({ text: capText(w.text), emph: w.emph, active: i === act, age: G - w.g, future: i > act }); }
-      drawGroup(ctx, W, H, items, settings.style, H * (R.pos / 100), accent, clamp((G - gr.start) / 0.08, 0, 1));
-    }
-  }
-  drawHook(ctx, W, H, G, accent);
-  drawBrand(ctx, W, H);
+  ctx.drawImage(overlayFor(G, W, H), 0, 0);
   if (R.bar && R.total) {
     const s = W / 1080; const f = clamp(G / R.total, 0, 1);
     ctx.fillStyle = 'rgba(255,255,255,.25)'; ctx.fillRect(0, 0, W, 9 * s);
@@ -1208,12 +1217,60 @@ function render(G, target, pl = Player) {
   if (!target || target.id === 'rv-canvas') Review.ui(G);
   return G;
 }
+/* כתוביות, כותרת וסימן מותג: שכבה אחת שמצוירת מחדש רק כשמשהו בה משתנה */
+function overlayFor(G, W, H) {
+  const accent = settings.accent;
+  const gi = R.caps ? groupAt(G) : -1; let act = -1, anim = false;
+  if (gi >= 0) {
+    const gr = R.groups[gi];
+    for (let i = gr.i0; i < gr.i1; i++) if (R.words[i].g <= G + 0.02) act = i;
+    anim = (act >= 0 && G - R.words[act].g < 0.18) || G - gr.start < 0.09;
+  }
+  const hookOn = !!(R.hook && R.hookText && G <= 2.4); const hookAnim = hookOn && (G < 0.27 || G > 2.08);
+  const key = [R.rev, gi, act, settings.style, accent, R.pos, hookOn ? R.hookText : '', R.brand ? settings.handle : '', anim ? 'a' + Math.round(G * 60) : '', hookAnim ? 'h' + Math.round(G * 60) : ''].join('|');
+  const ov = layer('overlay', W, H);
+  if (ov._key !== key) {
+    ov._key = key; const o = ov.getContext('2d'); o.clearRect(0, 0, W, H);
+    if (gi >= 0) {
+      const gr = R.groups[gi]; const items = [];
+      for (let i = gr.i0; i < gr.i1; i++) { const w = R.words[i]; items.push({ text: capText(w.text), emph: w.emph, active: i === act, age: G - w.g, future: i > act }); }
+      drawGroup(o, W, H, items, settings.style, H * (R.pos / 100), accent, clamp((G - gr.start) / 0.08, 0, 1));
+    }
+    if (hookOn) drawHook(o, W, H, G, accent);
+    drawBrand(o, W, H);
+  }
+  return ov;
+}
+/* בתצוגה המקדימה הווידאו מנוגן בנגן של הטלפון: תקריב והיפוך דרך CSS, והקנבס מצייר רק את הכתוביות */
+function renderPreview(G, cv, ctx, W, H, pl) {
+  const v = pl.v;
+  const seg = R.tl[pl.k]; const mirror = seg && R.clips[seg.clip] && R.clips[seg.clip].mirror;
+  const z = R.zoom ? zoomAt(G) : 1;
+  const tr = (mirror ? 'scaleX(-1) ' : '') + 'scale(' + z.toFixed(4) + ')';
+  if (v._tr !== tr) { v._tr = tr; v.style.transform = tr; }
+  const ov = overlayFor(G, W, H);
+  const bar = R.bar && R.total ? Math.round(clamp(G / R.total, 0, 1) * W) : -1;
+  const k = ov._key + '|' + bar;
+  if (cv._k !== k) {
+    cv._k = k; ctx.clearRect(0, 0, W, H); ctx.drawImage(ov, 0, 0);
+    if (bar >= 0) { const s = W / 1080; ctx.fillStyle = 'rgba(255,255,255,.25)'; ctx.fillRect(0, 0, W, 9 * s); ctx.fillStyle = settings.accent; ctx.fillRect(W - bar, 0, bar, 9 * s); }
+  }
+  Review.ui(G);
+  return G;
+}
+function applyPreviewLook() {
+  const look = LOOKS[settings.look] || LOOKS.natural;
+  const layers = (look.ops || []).map(([op, col]) => `<div style="background:${col};mix-blend-mode:${op}"></div>`);
+  if (look.vignette) layers.push('<div style="background:radial-gradient(circle at 50% 45%,rgba(0,0,0,0) 30%,rgba(0,0,0,.45) 75%)"></div>');
+  $('#pv-look').innerHTML = layers.join('');
+}
 function groupAt(G) {
   const gs = R.groups; let lo = 0, hi = gs.length - 1, ans = -1;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (gs[m].start <= G) { ans = m; lo = m + 1; } else hi = m - 1; }
   return ans >= 0 && G < gs[ans].end ? ans : -1;
 }
 function buildTimeline() {
+  R.rev = (R.rev || 0) + 1; // כל שינוי בכתוביות מרענן את השכבה המוכנה
   R.tl = []; let g = 0;
   R.clips.forEach((c, ci) => {
     c.keep = keepRanges(c.ranges, c.dur, R.trim);
@@ -1307,6 +1364,7 @@ function makePlayer(ui) {
     ui, v: null, k: 0, playing: false, busy: false, hooks: null, target: null, onEnd: null, onFrame: null, dest: null, src: null,
     init() {
       if (this.v) return;
+      if (this.ui) { this.v = $('#pv-video'); return; }
       const v = document.createElement('video'); v.playsInline = true; v.preload = 'auto'; v.setAttribute('playsinline', '');
       this.v = v;
     },
@@ -1385,7 +1443,11 @@ const Player = makePlayer(true);
 const Review = {
   lastG: -1, lastGroup: -2, openSheet: null,
   async fromShoot(sid) {
-    const segs = await DB.bySid(sid); if (!segs.length) { toast('אין עדיין קטעים מצולמים'); return; }
+    // אם האחסון בטלפון לא שמר את הקטעים (למשל בגלישה פרטית), משתמשים במה שצולם עכשיו בזיכרון
+    let segs = await DB.bySid(sid);
+    if (Shoot.sid === sid && Shoot.segs.length > segs.length) segs = Shoot.segs.slice();
+    if (!segs.length) { toast('אין עדיין קטעים מצולמים'); return; }
+    (R.clips || []).forEach((c) => { try { URL.revokeObjectURL(c.url); } catch (_) {} });
     const W = parseScript(scriptById(sid).text);
     R.from = 'shoot'; R.sid = sid; R.trim = true; R.hook = true;
     R.clips = segs.map((s) => ({ blob: s.blob, dur: s.dur, url: URL.createObjectURL(s.blob), mirror: s.mirror !== false, stamps: s.stamps || {}, w0: s.w0, w1: s.w1 }));
@@ -1397,6 +1459,7 @@ const Review = {
   async fromImport(file, text, dur) {
     R.script = null;
     R.from = 'import'; R.sid = null; R.trim = false; R.hook = false; R.eye = null;
+    (R.clips || []).forEach((c) => { try { URL.revokeObjectURL(c.url); } catch (_) {} });
     R.clips = [{ blob: file, dur, url: URL.createObjectURL(file), mirror: false, stamps: {} }];
     R.words = parseScript(text).map((w, i) => ({ ...w, idx: i, clip: 0, t: 0 }));
     await this.open();
@@ -1454,6 +1517,7 @@ const Review = {
     });
   },
   looks() {
+    applyPreviewLook();
     $('#looks').innerHTML = Object.entries(LOOKS).map(([k, l]) => `<button class="${k === settings.look ? 'on' : ''}" data-k="${k}">${l.name}</button>`).join('');
   },
   swatches() {
@@ -1584,8 +1648,20 @@ const Exporter = {
     } catch (e) { console.warn(e); }
   },
   async run() {
-    if (!R.tl.length) return;
+    if (!R.tl.length || this.busy) return;
     if (!window.MediaRecorder) { toast('הדפדפן הזה לא תומך בייצוא וידאו'); return; }
+    this.busy = true;
+    try { await this.runInner(); } finally { this.busy = false; }
+  },
+  /* נקרא בתוך ההקשה עצמה: באייפון וידאו עם קול מתנגן רק אם התחיל מהקשה */
+  unlock() {
+    try {
+      this.prime(); const v = this.pl.v; const c = R.clips[0]; if (!c) return;
+      if (v._url !== c.url) { v._url = c.url; v.src = c.url; }
+      const p = v.play(); if (p && p.then) p.then(() => { if (!this.busy || !this.pl.playing) v.pause(); }).catch(() => {});
+    } catch (_) {}
+  },
+  async runInner() {
     this.prime();
     const pl = this.pl;
     Review.sheet(null); Player.pause();
@@ -1614,10 +1690,16 @@ const Exporter = {
     };
     pl.onEnd = () => { setTimeout(() => { try { rec.state !== 'inactive' && rec.stop(); } catch (_) {} }, 250); };
     rec.start(500);
-    await pl.play();
+    // אם הניגון לא מתחיל, עוצרים מסודר במקום להיתקע על 0%
+    const started = await pl.play();
+    if (!started) { this.cancelled = true; try { rec.stop(); } catch (_) {} toast('הייצוא לא התחיל. הקישו שוב על ייצוא.'); }
+    // יציאה מהאפליקציה באמצע מפרקת את הסנכרון בין תמונה לקול, ולכן עוצרים
+    const onHide = () => { if (document.hidden && rec.state !== 'inactive') { this.cancelled = true; pl.pause(); try { rec.stop(); } catch (_) {} toast('הייצוא נעצר כי יצאתם מהאפליקציה. הקישו שוב על ייצוא.', 3600); } };
+    document.addEventListener('visibilitychange', onHide);
     await done;
+    document.removeEventListener('visibilitychange', onHide);
     pl.hooks = null; pl.onFrame = null; pl.onEnd = null; Wake.off();
-    render(Player.G());
+    prev._k = ''; render(Player.G());
     if (this.cancelled) { this.ui('close'); return; }
     const type = (rec.mimeType || mime || 'video/webm').split(';')[0];
     this.blob = new Blob(chunks, { type });
@@ -1660,7 +1742,7 @@ const Exporter = {
     else { $('#ex-result').pause(); this.ui('close'); if (current === 'review') Player.play(); if (current === 'home') Home.render(); }
   },
 };
-$('#rv-export').addEventListener('click', () => { Exporter.prime(); Exporter.run(); });
+$('#rv-export').addEventListener('click', () => { Exporter.unlock(); Exporter.run(); });
 $('#ex-close').addEventListener('click', () => Exporter.cancel());
 $('#ex-delete').addEventListener('click', (e) => armConfirm(e.currentTarget, 'הקשה נוספת מוחקת', async () => {
   await DB.del(Exporter.savedId, 'videos'); Exporter.savedId = null; $('#ex-result').pause(); Exporter.ui('close'); toast('הסרטון נמחק מהגלריה');

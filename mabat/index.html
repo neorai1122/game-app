@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500&family=Heebo:wght@800;900&family=Karantina:wght@700&family=Rubik:wght@500;600&display=swap">
-<link rel="stylesheet" href="app.css?v=8">
+<link rel="stylesheet" href="app.css?v=10">
 </head>
 <body>
 
@@ -175,7 +175,11 @@
 <!-- ============ עריכה ============ -->
 <section class="screen review" id="s-review" data-screen="review" hidden>
   <div class="stage" id="stage">
-    <canvas id="rv-canvas" width="720" height="1280"></canvas>
+    <div class="pv" id="pv">
+      <video id="pv-video" playsinline preload="auto"></video>
+      <div class="pv-look" id="pv-look" aria-hidden="true"></div>
+      <canvas id="rv-canvas" width="720" height="1280"></canvas>
+    </div>
     <button class="big-play" id="rv-play" aria-label="ניגון"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" class="fill"/></svg></button>
     <div class="busy" id="rv-busy" hidden><span class="spin"></span><b id="rv-busy-l">מכין את הכתוביות…</b></div>
   </div>
@@ -264,6 +268,6 @@
 
 <div class="toast" id="toast" role="status" hidden></div>
 
-<script src="app.js?v=8"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
