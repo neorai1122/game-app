@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#0b0e11">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="מבט">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="description" content="טלפרומפטר שיושב מתחת לעדשה, זז בקצב הקול שלך, ומוציא סרטון עם כתוביות.">
+<title>מבט</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Assistant:wght@600;800&family=Frank+Ruhl+Libre:wght@500;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Hebrew:wght@400;500;600;700&family=Karantina:wght@400;700&family=Suez+One&display=swap">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- ===================== בית ===================== -->
+<section class="screen" id="s-home" data-screen="home">
+  <header class="home-top">
+    <div class="brand">מבט<i>.</i></div>
+    <button class="icon-btn" id="btn-settings" aria-label="הגדרות">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-2.6-1.5L14 2.5h-4l-.4 2.5A7.5 7.5 0 0 0 7 6.5l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 3l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 2.6 1.5l.4 2.5h4l.4-2.5a7.5 7.5 0 0 0 2.6-1.5l2.4 1 2-3.4z"/></svg>
+    </button>
+  </header>
+  <p class="home-lead">הטקסט מתחת לעדשה. העיניים במצלמה.</p>
+
+  <div class="home-actions">
+    <button class="act act-main" id="btn-new">
+      <span class="act-ico"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="M16 10.5 21 8v8l-5-2.5"/></svg></span>
+      <span class="act-txt"><b>צילום חדש</b><small>כותבים תסריט ומצלמים בקטעים</small></span>
+    </button>
+    <button class="act" id="btn-import">
+      <span class="act-ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 14h4M13 14h4M7 17h7"/></svg></span>
+      <span class="act-txt"><b>כתוביות לסרטון קיים</b><small>מעלים סרטון, מדביקים את הטקסט</small></span>
+    </button>
+  </div>
+
+  <div class="list-head"><h2>התסריטים שלי</h2><span class="mono" id="count-scripts"></span></div>
+  <ul class="scripts" id="scripts"></ul>
+</section>
+
+<!-- ===================== עורך ===================== -->
+<section class="screen" id="s-editor" data-screen="editor" hidden>
+  <header class="bar">
+    <button class="icon-btn" data-back aria-label="חזרה"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+    <input id="ed-title" class="title-input" placeholder="שם התסריט" maxlength="60" autocomplete="off">
+    <button class="icon-btn" id="ed-delete" aria-label="מחיקת התסריט"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13"/></svg></button>
+  </header>
+  <div class="ed-body">
+    <textarea id="ed-text" placeholder="כתבו כאן את מה שתגידו בסרטון.&#10;&#10;המשפט הראשון הוא ההוק: הוא יופיע בגדול בתחילת הסרטון." spellcheck="true"></textarea>
+    <div class="ed-tools">
+      <button class="chip" id="ed-emph"><b>*הדגשה*</b></button>
+      <button class="chip" id="ed-pause">/ הפסקה</button>
+      <span class="ed-stats mono" id="ed-stats"></span>
+    </div>
+    <ul class="ed-warn" id="ed-warn"></ul>
+    <p class="ed-help">מילה בין כוכביות תופיע בכתוביות בצבע המותג. קו נטוי מסמן נשימה.</p>
+  </div>
+  <footer class="ed-foot">
+    <button class="btn btn-ghost" id="ed-to-import">כתוביות לסרטון קיים</button>
+    <button class="btn btn-primary" id="ed-shoot">לצילום<span class="mono" id="ed-draft"></span></button>
+  </footer>
+</section>
+
+<!-- ===================== צילום ===================== -->
+<section class="screen shoot" id="s-shoot" data-screen="shoot" hidden>
+  <video id="cam" playsinline muted autoplay></video>
+  <div class="shade"></div>
+
+  <div class="progress" id="progress"><div class="prog-live" id="prog-live"></div></div>
+
+  <div class="prompter" id="prompter" aria-live="off"><div class="ptrack" id="ptrack"></div></div>
+
+  <div class="shoot-top">
+    <button class="icon-btn glass" id="sh-close" aria-label="סגירה"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    <div class="timecode mono" id="timecode">0:00<span> / 1:00</span></div>
+  </div>
+
+  <div class="rail" id="rail">
+    <button class="rail-btn" id="sh-flip" aria-label="החלפת מצלמה"><svg viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><path d="M9.5 13.5a2.6 2.6 0 0 0 5 .8M14.5 12.5a2.6 2.6 0 0 0-5-.8"/></svg><span>היפוך</span></button>
+    <button class="rail-btn" id="sh-mode" aria-label="מצב גלילה"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg><span id="sh-mode-l">קול</span></button>
+    <button class="rail-btn" id="sh-size" aria-label="גודל טקסט"><svg viewBox="0 0 24 24"><path d="M4 18 9 6l5 12M5.8 14h6.4M15 18l3-7 3 7M15.8 16h4.4"/></svg><span id="sh-size-l">22</span></button>
+    <button class="rail-btn" id="sh-timer" aria-label="ספירה לאחור"><svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9.5 2.5h5"/></svg><span id="sh-timer-l">3 שנ׳</span></button>
+    <button class="rail-btn" id="sh-len" aria-label="אורך מקסימלי"><svg viewBox="0 0 24 24"><path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg><span id="sh-len-l">60 שנ׳</span></button>
+    <button class="rail-btn" id="sh-rehearse" aria-label="מצב חזרה"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></svg><span>חזרה</span></button>
+    <button class="rail-btn" id="sh-eye" aria-label="מד קשר עין"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span>מבט</span></button>
+  </div>
+
+  <div class="hud-chips">
+    <span class="hud-chip" id="eye-chip" hidden><i></i><b class="mono">--</b><em>קשר עין</em></span>
+    <span class="hud-chip warn" id="hint-chip" hidden></span>
+    <span class="hud-chip" id="mode-chip" hidden></span>
+  </div>
+
+  <div class="countdown mono" id="countdown" hidden></div>
+
+  <div class="shoot-bottom">
+    <button class="side-btn" id="sh-del" aria-label="מחיקת הקטע האחרון" disabled>
+      <svg viewBox="0 0 24 24"><path d="M9 5h11v14H9l-6-7z"/><path d="m12 9.5 5 5M17 9.5l-5 5"/></svg>
+      <span id="sh-del-l">מחיקה</span>
+    </button>
+    <button class="rec-btn" id="sh-rec" aria-label="הקלטה"><span class="rec-core"></span></button>
+    <button class="side-btn done" id="sh-done" aria-label="סיום ומעבר לעריכה" disabled>
+      <svg viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+      <span>הבא</span>
+    </button>
+  </div>
+</section>
+
+<!-- ===================== ייבוא ===================== -->
+<section class="screen" id="s-import" data-screen="import" hidden>
+  <header class="bar">
+    <button class="icon-btn" data-back aria-label="חזרה"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+    <h1 class="bar-title">כתוביות לסרטון קיים</h1>
+    <span class="icon-btn-space"></span>
+  </header>
+  <div class="imp-body">
+    <label class="drop" id="drop" for="imp-file">
+      <input type="file" id="imp-file" accept="video/*" hidden>
+      <video id="imp-preview" playsinline muted hidden></video>
+      <span class="drop-empty" id="drop-empty">
+        <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 15v4h16v-4"/></svg>
+        <b>בחירת סרטון</b>
+        <small>מהגלריה או מהקבצים, עד 3 דקות</small>
+      </span>
+      <span class="drop-meta mono" id="drop-meta" hidden></span>
+    </label>
+
+    <div class="field">
+      <div class="field-head"><label for="imp-text">מה נאמר בסרטון</label><select id="imp-pick" aria-label="הדבקה מתסריט קיים"><option value="">מתסריט שמור…</option></select></div>
+      <textarea id="imp-text" rows="7" placeholder="הדביקו או כתבו את המלל של הסרטון, בדיוק לפי הסדר שבו נאמר."></textarea>
+    </div>
+    <p class="ed-help">התזמון נבנה מתוך הקול שבסרטון. אחר כך אפשר לדייק בהקשות על המסך.</p>
+  </div>
+  <footer class="ed-foot single">
+    <button class="btn btn-primary" id="imp-go" disabled>יצירת כתוביות</button>
+  </footer>
+</section>
+
+<!-- ===================== עריכה ===================== -->
+<section class="screen review" id="s-review" data-screen="review" hidden>
+  <header class="bar">
+    <button class="icon-btn" id="rv-back" aria-label="חזרה"><svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+    <h1 class="bar-title" id="rv-title">עריכה</h1>
+    <span class="eye-score mono" id="rv-eye" hidden></span>
+  </header>
+
+  <div class="stage" id="stage">
+    <canvas id="rv-canvas" width="720" height="1280"></canvas>
+    <button class="stage-play" id="rv-play" aria-label="ניגון"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+    <div class="stage-busy" id="rv-busy" hidden><span class="spinner"></span><b id="rv-busy-l">מנתח את הקול…</b></div>
+  </div>
+  <div class="scrub">
+    <span class="mono" id="rv-t">0:00</span>
+    <input type="range" id="rv-seek" min="0" max="1000" value="0" aria-label="מיקום בסרטון">
+    <span class="mono" id="rv-d">0:00</span>
+  </div>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" class="tab on" data-tab="style">סגנון</button>
+    <button role="tab" class="tab" data-tab="caps">כתוביות</button>
+    <button role="tab" class="tab" data-tab="edit">עריכה</button>
+  </nav>
+
+  <div class="panels">
+    <div class="panel" data-panel="style">
+      <div class="styles" id="styles"></div>
+      <div class="row-field">
+        <label for="rv-pos">מיקום הכתוביות</label>
+        <input type="range" id="rv-pos" min="45" max="86" value="70">
+      </div>
+    </div>
+    <div class="panel" data-panel="caps" hidden>
+      <button class="btn btn-ghost wide" id="rv-tapsync">
+        <svg viewBox="0 0 24 24"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V10m0-1a1.5 1.5 0 0 1 3 0v2m0-1a1.5 1.5 0 0 1 3 0v4.5A6.5 6.5 0 0 1 11.5 21h0A6.5 6.5 0 0 1 6 18l-2.6-4a1.5 1.5 0 0 1 2.4-1.8L9 15"/></svg>
+        סנכרון בהקשות
+      </button>
+      <ol class="groups" id="groups"></ol>
+    </div>
+    <div class="panel" data-panel="edit" hidden>
+      <label class="toggle"><input type="checkbox" id="rv-trim" checked><span><b>חיתוך שתיקות</b><small>הפסקות ארוכות נחתכות לקאט חד</small></span></label>
+      <label class="toggle"><input type="checkbox" id="rv-hook" checked><span><b>כותרת פתיחה</b><small>ההוק בגדול בשתי השניות הראשונות</small></span></label>
+      <input class="text-input" id="rv-hook-text" maxlength="48" placeholder="טקסט הכותרת">
+      <label class="toggle"><input type="checkbox" id="rv-brand" checked><span><b>סימן מותג</b><small id="rv-brand-l">השם שלכם בפינה</small></span></label>
+      <label class="toggle"><input type="checkbox" id="rv-caps" checked><span><b>כתוביות</b><small>כיבוי משאיר רק את הכותרת והסימן</small></span></label>
+    </div>
+  </div>
+
+  <footer class="ed-foot single">
+    <button class="btn btn-primary" id="rv-export">ייצוא סרטון</button>
+  </footer>
+</section>
+
+<!-- ===================== שכבות ===================== -->
+<div class="sheet-wrap" id="settings" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="set-h">
+    <div class="grip"></div>
+    <h2 id="set-h">הגדרות</h2>
+    <div class="field"><label for="set-handle">שם או כינוי לסימן המותג</label><input class="text-input" id="set-handle" maxlength="30" placeholder="@השם_שלך" dir="auto"></div>
+    <div class="field"><span class="label">צבע מילים מודגשות</span><div class="swatches" id="set-accent"></div></div>
+    <div class="field"><span class="label">איכות ייצוא</span>
+      <div class="seg" id="set-quality"><button data-v="1080">1080p</button><button data-v="720">720p · מהיר</button></div>
+    </div>
+    <div class="field"><span class="label">קצב בגלילה קבועה</span>
+      <div class="row-field tight"><input type="range" id="set-wpm" min="90" max="200" step="5"><span class="mono" id="set-wpm-l"></span></div>
+    </div>
+    <button class="btn btn-primary wide" data-close>סיום</button>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="tapsync" hidden>
+  <div class="tapsync">
+    <p class="ts-step mono" id="ts-step"></p>
+    <p class="ts-next" id="ts-next"></p>
+    <button class="ts-hit" id="ts-hit">הקישו כשהשורה מתחילה</button>
+    <div class="ts-foot"><button class="btn btn-ghost" id="ts-cancel">ביטול</button></div>
+  </div>
+</div>
+
+<div class="sheet-wrap" id="exporter" hidden>
+  <div class="sheet center" role="dialog" aria-modal="true" aria-labelledby="ex-h">
+    <div class="ring" id="ex-ring"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="44"/><circle cx="50" cy="50" r="44" id="ex-arc"/></svg><b class="mono" id="ex-pct">0%</b></div>
+    <h2 id="ex-h">מייצא את הסרטון</h2>
+    <p class="muted" id="ex-sub">הסרטון מתנגן ונצרב עם הכתוביות. השאירו את המסך פתוח.</p>
+    <video id="ex-result" playsinline controls hidden></video>
+    <div class="ex-actions" id="ex-actions" hidden>
+      <button class="btn btn-primary" id="ex-share">שיתוף</button>
+      <a class="btn btn-ghost" id="ex-download" download="mabat.mp4">שמירה למכשיר</a>
+    </div>
+    <button class="btn btn-ghost wide" id="ex-close">ביטול</button>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
